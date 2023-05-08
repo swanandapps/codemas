@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>CodeMas — Submission Flow</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    padding: 48px 40px;
+    line-height: 1.6;
+  }
+
+  /* ── COLOURS PER ACTOR ── */
+  :root {
+    --browser:  #6366f1;
+    --django:   #10b981;
+    --redis:    #f59e0b;
+    --celery:   #e63946;
+    --docker:   #3b82f6;
+    --postgres: #8b5cf6;
+  }
+
+  /* ── HEADER ── */
+  .header {
+    text-align: center;
+    margin-bottom: 48px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid #1e2330;
+  }
+  .header h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; color: #f8fafc; }
+  .header p  { font-size: 14px; color: #64748b; margin-top: 6px; }
+
+  /* ── LEGEND ── */
+  .legend {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 48px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #1a1f2e;
+    border: 1px solid #2a3045;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .dot {
+    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  }
+
+  /* ── ACTORS ROW ── */
+  .actors-row {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-bottom: 40px;
+  }
+  .actor-card {
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid;
+    text-align: center;
+  }
+  .actor-card .actor-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .actor-card .actor-role { font-size: 11px; opacity: 0.75; line-height: 1.4; }
+
+  .actor-browser  { border-color: var(--browser);  background: rgba(99,102,241,0.08);  color: var(--browser);  }
+  .actor-django   { border-color: var(--django);   background: rgba(16,185,129,0.08);  color: var(--django);   }
+  .actor-redis    { border-color: var(--redis);    background: rgba(245,158,11,0.08);  color: var(--redis);    }
+  .actor-celery   { border-color: var(--celery);   background: rgba(230,57,70,0.08);   color: var(--celery);   }
+  .actor-docker   { border-color: var(--docker);   background: rgba(59,130,246,0.08);  color: var(--docker);   }
+  .actor-postgres { border-color: var(--postgres); background: rgba(139,92,246,0.08);  color: var(--postgres); }
+
+  /* ── STEPS ── */
+  .steps { display: flex; flex-direction: column; gap: 0; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 0 20px;
+    position: relative;
+  }
+
+  .step-spine {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 20px;
+  }
+  .step-num {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    flex-shrink: 0;
+    z-index: 1;
+  }
+  .step-line {
+    flex: 1;
+    width: 2px;
+    margin-top: 6px;
+    min-height: 20px;
+  }
+
+  .step-body {
+    padding: 20px 0 28px;
+  }
+
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .actor-tag {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .step-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #f1f5f9;
+  }
+  .step-desc {
+    font-size: 13px;
+    color: #94a3b8;
+    margin-bottom: 12px;
+    line-height: 1.6;
+  }
+
+  /* code block */
+  .code-block {
+    background: #0a0d14;
+    border: 1px solid #1e2538;
+    border-left: 3px solid;
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  /* per-actor colour application */
+  .s-browser  .step-num  { background: rgba(99,102,241,0.15);  color: var(--browser);  border: 1.5px solid var(--browser);  }
+  .s-browser  .step-line { background: rgba(99,102,241,0.2);   }
+  .s-browser  .actor-tag { background: rgba(99,102,241,0.15);  color: var(--browser);  }
+  .s-browser  .code-block{ border-left-color: var(--browser);  }
+
+  .s-django   .step-num  { background: rgba(16,185,129,0.15);  color: var(--django);   border: 1.5px solid var(--django);   }
+  .s-django   .step-line { background: rgba(16,185,129,0.2);   }
+  .s-django   .actor-tag { background: rgba(16,185,129,0.15);  color: var(--django);   }
+  .s-django   .code-block{ border-left-color: var(--django);   }
+
+  .s-redis    .step-num  { background: rgba(245,158,11,0.15);  color: var(--redis);    border: 1.5px solid var(--redis);    }
+  .s-redis    .step-line { background: rgba(245,158,11,0.2);   }
+  .s-redis    .actor-tag { background: rgba(245,158,11,0.15);  color: var(--redis);    }
+  .s-redis    .code-block{ border-left-color: var(--redis);    }
+
+  .s-celery   .step-num  { background: rgba(230,57,70,0.15);   color: var(--celery);   border: 1.5px solid var(--celery);   }
+  .s-celery   .step-line { background: rgba(230,57,70,0.2);    }
+  .s-celery   .actor-tag { background: rgba(230,57,70,0.15);   color: var(--celery);   }
+  .s-celery   .code-block{ border-left-color: var(--celery);   }
+
+  .s-docker   .step-num  { background: rgba(59,130,246,0.15);  color: var(--docker);   border: 1.5px solid var(--docker);   }
+  .s-docker   .step-line { background: rgba(59,130,246,0.2);   }
+  .s-docker   .actor-tag { background: rgba(59,130,246,0.15);  color: var(--docker);   }
+  .s-docker   .code-block{ border-left-color: var(--docker);   }
+
+  .s-postgres .step-num  { background: rgba(139,92,246,0.15);  color: var(--postgres); border: 1.5px solid var(--postgres); }
+  .s-postgres .step-line { background: rgba(139,92,246,0.2);   }
+  .s-postgres .actor-tag { background: rgba(139,92,246,0.15);  color: var(--postgres); }
+  .s-postgres .code-block{ border-left-color: var(--postgres); }
+
+  /* syntax highlight helpers */
+  .kw  { color: #c792ea; }   /* keyword */
+  .fn  { color: #82aaff; }   /* function */
+  .str { color: #c3e88d; }   /* string */
+  .cm  { color: #546e7a; font-style: italic; }  /* comment */
+  .num { color: #f78c6c; }   /* number */
+  .cls { color: #ffcb6b; }   /* class/type */
+
+  /* section divider */
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 32px 0;
+  }
+  .divider-line { flex: 1; height: 1px; background: #1e2538; }
+  .divider-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #334155;
+    white-space: nowrap;
+  }
+
+  /* arrow between steps */
+  .arrow {
+    text-align: center;
+    color: #334155;
+    font-size: 18px;
+    margin: -8px 0 -8px 20px;
+    line-height: 1;
+  }
+
+  /* ── SCHEMA SECTION ── */
+  .app-section { margin-bottom: 32px; }
+  .app-section-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.5px; margin-bottom: 10px; display: flex;
+    align-items: center; gap: 10px;
+  }
+  .app-section-label span { height: 1px; flex: 1; background: #1e2538; display: block; }
+
+  .models-grid { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+
+  .model-card {
+    background: #1a1f2e; border: 1px solid #2a3045;
+    border-radius: 10px; overflow: hidden;
+    min-width: 200px; flex: 1;
+  }
+  .model-card-head {
+    padding: 10px 14px; border-bottom: 1px solid #2a3045;
+    font-size: 13px; font-weight: 700; color: #f1f5f9;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .model-app-badge {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; padding: 2px 8px; border-radius: 8px; white-space: nowrap;
+  }
+  .model-fields { padding: 6px 0; }
+  .field-row { display: flex; align-items: center; gap: 8px; padding: 4px 14px; }
+  .field-row:hover { background: rgba(255,255,255,0.02); }
+  .field-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px; color: #cbd5e1; flex: 1; white-space: nowrap;
+  }
+  .field-note { font-size: 11px; color: #475569; white-space: nowrap; }
+  .ft {
+    font-size: 9.5px; font-weight: 700; padding: 2px 7px;
+    border-radius: 6px; white-space: nowrap; letter-spacing: 0.3px; flex-shrink: 0;
+  }
+  .ft-fk   { background: rgba(139,92,246,0.18); color: #a78bfa; }
+  .ft-11   { background: rgba(59,130,246,0.18);  color: #60a5fa; }
+  .ft-json { background: rgba(245,158,11,0.18);  color: #fbbf24; }
+  .ft-enum { background: rgba(100,116,139,0.18); color: #94a3b8; }
+  .ft-bool { background: rgba(239,68,68,0.15);   color: #f87171; }
+  .ft-int  { background: rgba(249,115,22,0.15);  color: #fb923c; }
+  .ft-prop { background: rgba(20,184,166,0.15);  color: #2dd4bf; }
+  .ft-text { background: rgba(30,41,59,0.8);     color: #64748b; }
+  .ft-uniq { background: rgba(236,72,153,0.15);  color: #f472b6; }
+
+  /* relationship table */
+  .rel-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .rel-table th {
+    text-align: left; padding: 8px 14px; color: #475569;
+    font-weight: 600; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.8px; border-bottom: 1px solid #2a3045;
+  }
+  .rel-table td { padding: 9px 14px; border-bottom: 1px solid #1a1f2e; vertical-align: middle; }
+  .rel-table tr:last-child td { border-bottom: none; }
+  .rel-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .rel-from { font-family: 'JetBrains Mono',monospace; font-size: 12px; color: #e2e8f0; }
+  .rel-arrow { color: #475569; font-size: 16px; }
+  .rel-to   { font-family: 'JetBrains Mono',monospace; font-size: 12px; color: #a78bfa; }
+  .rel-type { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+  .rt-1n { background: rgba(16,185,129,0.15); color: #34d399; }
+  .rt-11 { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .rt-n1 { background: rgba(139,92,246,0.15); color: #a78bfa; }
+  .rt-jn { background: rgba(245,158,11,0.15); color: #fbbf24; }
+  .rel-pattern { font-size: 11px; color: #64748b; }
+
+  /* patterns grid */
+  .pattern-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .pattern-card { background: #1a1f2e; border: 1px solid #2a3045; border-radius: 10px; padding: 16px; }
+  .pattern-name { margin-bottom: 8px; }
+  .pattern-badge {
+    font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 8px;
+    text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;
+  }
+  .pattern-example {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: #64748b; margin-bottom: 8px; line-height: 1.5;
+  }
+  .pattern-why { font-size: 12px; color: #475569; line-height: 1.6; }
+
+  /* print */
+  @media print {
+    body { background: #fff; color: #0f172a; padding: 24px; }
+    .actor-card, .step-body, .code-block { background: #f8fafc !important; }
+    .code-block { background: #f1f5f9 !important; border-color: #cbd5e1 !important; }
+    .step-title { color: #0f172a; }
+    .step-desc  { color: #475569; }
+    .cm { color: #94a3b8; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>CodeMas — Submission Execution Flow</h1>
+  <p>All actors, their roles, and the exact code that runs at each step</p>
+</div>
+
+<!-- LEGEND -->
+<div class="legend">
+  <div class="legend-item"><div class="dot" style="background:var(--browser)"></div>Browser</div>
+  <div class="legend-item"><div class="dot" style="background:var(--django)"></div>Django</div>
+  <div class="legend-item"><div class="dot" style="background:var(--redis)"></div>Redis</div>
+  <div class="legend-item"><div class="dot" style="background:var(--celery)"></div>Celery Worker</div>
+  <div class="legend-item"><div class="dot" style="background:var(--docker)"></div>Docker / Lambda</div>
+  <div class="legend-item"><div class="dot" style="background:var(--postgres)"></div>Postgres</div>
+</div>
+
+<!-- ACTORS -->
+<div class="actors-row">
+  <div class="actor-card actor-browser">
+    <div class="actor-name">Browser</div>
+    <div class="actor-role">Student UI. Sends code. Opens SSE stream. Shows result.</div>
+  </div>
+  <div class="actor-card actor-django">
+    <div class="actor-name">Django</div>
+    <div class="actor-role">HTTP server. Validates input. Enforces rules. Coordinates.</div>
+  </div>
+  <div class="actor-card actor-redis">
+    <div class="actor-name">Redis</div>
+    <div class="actor-role">Speed layer. Job queue (Celery) + Pub/Sub (result notify).</div>
+  </div>
+  <div class="actor-card actor-celery">
+    <div class="actor-name">Celery</div>
+    <div class="actor-role">Background worker. Picks jobs. Runs execution. Publishes result.</div>
+  </div>
+  <div class="actor-card actor-docker">
+    <div class="actor-name">Docker</div>
+    <div class="actor-role">Isolated sandbox. Runs untrusted student code safely.</div>
+  </div>
+  <div class="actor-card actor-postgres">
+    <div class="actor-name">Postgres</div>
+    <div class="actor-role">Permanent truth. Stores all submissions, results and flags.</div>
+  </div>
+</div>
+
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Flow begins</div><div class="divider-line"></div></div>
+
+<!-- STEPS -->
+<div class="steps">
+
+  <!-- 1 -->
+  <div class="step s-browser">
+    <div class="step-spine">
+      <div class="step-num">1</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Browser</span>
+        <span class="step-title">Student submits code</span>
+      </div>
+      <p class="step-desc">Student hits Submit. Browser sends a POST request with the question ID, code, and language.</p>
+      <div class="code-block"><span class="cm">// ExamTakeView.vue — frontend</span>
+<span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">api</span>.<span class="fn">post</span>(<span class="str">'/submissions/'</span>, {
+  question: questionId,
+  code: editorCode,
+  language: <span class="str">'python'</span>,
+})</div>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="step s-django">
+    <div class="step-spine">
+      <div class="step-num">2</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Django</span>
+        <span class="step-title">Validate input &amp; fetch question</span>
+      </div>
+      <p class="step-desc">Django receives the request. Checks the question exists. Validates the serializer fields.</p>
+      <div class="code-block"><span class="cm"># submissions/views.py</span>
+question = <span class="cls">Question</span>.objects.<span class="fn">filter</span>(pk=question_id).<span class="fn">first</span>()
+<span class="kw">if not</span> question:
+    <span class="kw">return</span> <span class="cls">Response</span>({<span class="str">'error'</span>: <span class="str">'Question not found'</span>}, status=<span class="num">404</span>)
+
+serializer = <span class="cls">SubmissionCreateSerializer</span>(data=request.data)
+<span class="kw">if not</span> serializer.<span class="fn">is_valid</span>():
+    <span class="kw">return</span> <span class="cls">Response</span>(serializer.errors, status=<span class="num">400</span>)</div>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="step s-postgres">
+    <div class="step-spine">
+      <div class="step-num">3</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Postgres</span>
+        <span class="step-title">Count existing attempts — enforce policy limit</span>
+      </div>
+      <p class="step-desc">Django queries Postgres to count how many submissions this student has already made for this question. The limit comes from PlagiarismPolicy — a trainer-configurable singleton. If at or over the limit, the request is rejected before any row is written.</p>
+      <div class="code-block"><span class="cm"># submissions/views.py</span>
+max_attempts = <span class="cls">PlagiarismPolicy</span>.<span class="fn">get</span>().max_attempts
+
+attempt_number = <span class="cls">Submission</span>.objects.<span class="fn">filter</span>(
+    student=request.user, question=question
+).<span class="fn">count</span>() + <span class="num">1</span>
+
+<span class="kw">if</span> attempt_number > max_attempts:
+    <span class="kw">return</span> <span class="cls">Response</span>({<span class="str">'error'</span>: <span class="str">'Max attempts reached'</span>}, status=<span class="num">403</span>)
+
+<span class="cm"># e.g. student has 1 existing row → attempt_number = 2</span>
+<span class="cm"># if max_attempts = 3, this is allowed; 4 would be rejected</span></div>
+    </div>
+  </div>
+
+  <!-- 4 -->
+  <div class="step s-postgres">
+    <div class="step-spine">
+      <div class="step-num">4</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Postgres</span>
+        <span class="step-title">Write submission row — status: pending</span>
+      </div>
+      <p class="step-desc">Django writes the submission to Postgres as <strong>pending</strong>. This is the permanent record. attempt_number is the value calculated from the Postgres count in step 3.</p>
+      <div class="code-block"><span class="cm"># submissions/views.py</span>
+submission = serializer.<span class="fn">save</span>(
+    student=request.user,
+    exam=question.exam,
+    attempt_number=attempt_number,
+    ip_address=request.META.<span class="fn">get</span>(<span class="str">'REMOTE_ADDR'</span>),
+)
+
+<span class="cm"># Postgres row after this step:</span>
+<span class="cm"># id=42, status='pending', student_id=1, question_id=7, attempt_number=2</span></div>
+    </div>
+  </div>
+
+  <!-- 5 -->
+  <div class="step s-django">
+    <div class="step-spine">
+      <div class="step-num">5</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Django</span>
+        <span class="step-title">Push execution job to Celery queue via Redis LPUSH</span>
+      </div>
+      <p class="step-desc">.delay() does NOT run the function. It serializes the task name + args to JSON and does LPUSH on the Redis "celery" list. Only the execution job is pushed here — behavioural analysis runs post-exam alongside Phase 2, not per-submission.</p>
+      <div class="code-block"><span class="cm"># submissions/views.py</span>
+<span class="fn">execute_submission</span>.<span class="fn">delay</span>(submission.id)
+
+<span class="cm"># What .delay() actually does internally:</span>
+<span class="cm"># LPUSH celery '{"task":"execution.tasks.execute_submission","args":[42]}'</span>
+
+<span class="cm"># Redis queue after this step:</span>
+<span class="cm"># celery → [ execute(42) ]</span></div>
+    </div>
+  </div>
+
+  <!-- 6 -->
+  <div class="step s-browser">
+    <div class="step-spine">
+      <div class="step-num">6</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Browser</span>
+        <span class="step-title">Receive 201 response — open SSE stream</span>
+      </div>
+      <p class="step-desc">Django immediately returns 201 with status=pending. The browser then opens an SSE (Server-Sent Events) connection to stream the result when it's ready. This is a long-lived HTTP connection — not polling.</p>
+      <div class="code-block"><span class="cm">// Browser receives:</span>
+{ id: <span class="num">42</span>, status: <span class="str">'pending'</span>, ... }
+
+<span class="cm">// Then immediately opens SSE stream:</span>
+<span class="kw">const</span> es = <span class="kw">new</span> <span class="cls">EventSource</span>(<span class="str">`/api/submissions/42/stream?token=...`</span>)
+es.<span class="fn">onmessage</span> = (e) => {
+  <span class="kw">const</span> data = <span class="cls">JSON</span>.<span class="fn">parse</span>(e.data)
+  <span class="kw">if</span> (data.status === <span class="str">'passed'</span> || data.status === <span class="str">'failed'</span>) {
+    es.<span class="fn">close</span>()
+    <span class="fn">showResult</span>(data.status)
+  }
+}</div>
+    </div>
+  </div>
+
+  <!-- 7 -->
+  <div class="step s-redis">
+    <div class="step-spine">
+      <div class="step-num">7</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Redis</span>
+        <span class="step-title">Django subscribes to pub/sub channel for this submission</span>
+      </div>
+      <p class="step-desc">The SSE endpoint in Django subscribes to a Redis pub/sub channel named "submission:42". It then sends "waiting" to the browser and blocks — waiting for Celery to publish on that channel.</p>
+      <div class="code-block"><span class="cm"># submissions/sse.py</span>
+<span class="kw">def</span> <span class="fn">event_stream</span>():
+    r = redis.<span class="cls">Redis</span>.<span class="fn">from_url</span>(os.environ.<span class="fn">get</span>(<span class="str">'REDIS_URL'</span>))
+    pubsub = r.<span class="fn">pubsub</span>()
+    channel = <span class="str">f"submission:{submission_id}"</span>  <span class="cm"># "submission:42"</span>
+    pubsub.<span class="fn">subscribe</span>(channel)
+
+    <span class="kw">yield</span> <span class="str">f"data: {json.dumps({'status': 'waiting'})}\n\n"</span>
+
+    <span class="kw">for</span> message <span class="kw">in</span> pubsub.<span class="fn">listen</span>():     <span class="cm"># ← blocks here, sleeping</span>
+        <span class="kw">if</span> message[<span class="str">'type'</span>] == <span class="str">'message'</span>:
+            <span class="kw">yield</span> <span class="str">f"data: {message['data'].decode()}\n\n"</span>
+            <span class="kw">break</span>                          <span class="cm"># one result, done</span>
+
+    pubsub.<span class="fn">unsubscribe</span>(channel)</div>
+    </div>
+  </div>
+
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Celery worker wakes up</div><div class="divider-line"></div></div>
+
+  <!-- 8 -->
+  <div class="step s-celery">
+    <div class="step-spine">
+      <div class="step-num">8</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Celery Worker</span>
+        <span class="step-title">BRPOP unblocks — worker picks up the job</span>
+      </div>
+      <p class="step-desc">The Celery worker was sleeping on BRPOP — a blocking Redis command that waits until a job arrives. The moment Django did LPUSH in step 5, Redis woke the worker up. The worker deserializes the JSON, looks up the function by name in its task registry, and calls it.</p>
+      <div class="code-block"><span class="cm"># This is inside Celery library code — not our code</span>
+<span class="cm"># celery/worker/consumer.py (simplified)</span>
+<span class="kw">while</span> <span class="cls">True</span>:
+    message = redis.<span class="fn">BRPOP</span>(<span class="str">"celery"</span>, timeout=<span class="num">0</span>)   <span class="cm"># blocks until job arrives</span>
+    task_name = message[<span class="str">"task"</span>]                   <span class="cm"># "execution.tasks.execute_submission"</span>
+    fn = task_registry[task_name]                  <span class="cm"># looks up @shared_task function</span>
+    fn(*message[<span class="str">"args"</span>])                          <span class="cm"># calls execute_submission(42)</span></div>
+    </div>
+  </div>
+
+  <!-- 9 -->
+  <div class="step s-celery">
+    <div class="step-spine">
+      <div class="step-num">9</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Celery Worker</span>
+        <span class="step-title">Set status to running — publish to SSE stream</span>
+      </div>
+      <p class="step-desc">Worker saves "running" to Postgres, then immediately publishes to the Redis pub/sub channel. Django's SSE endpoint is already subscribed — it receives this and forwards it to the browser, so the student sees a live "Running…" indicator before execution even finishes.</p>
+      <div class="code-block"><span class="cm"># execution/tasks.py</span>
+submission.status = <span class="str">'running'</span>
+submission.<span class="fn">save</span>()
+
+r = redis.<span class="cls">Redis</span>.<span class="fn">from_url</span>(os.environ.<span class="fn">get</span>(<span class="str">'REDIS_URL'</span>))
+r.<span class="fn">publish</span>(<span class="str">f"submission:{submission_id}"</span>, json.<span class="fn">dumps</span>({<span class="str">'status'</span>: <span class="str">'running'</span>}))
+
+<span class="cm"># SSE stream immediately forwards to browser:</span>
+<span class="cm"># data: {"status": "running"}</span></div>
+    </div>
+  </div>
+
+  <!-- 10 -->
+  <div class="step s-docker">
+    <div class="step-spine">
+      <div class="step-num">10</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Docker / Lambda</span>
+        <span class="step-title">Run student code against each test case in isolation</span>
+      </div>
+      <p class="step-desc">For each test case, a Docker container is spun up with the student's code and test input. The container has no network, 128MB memory limit, and is destroyed after running. Output is compared against expected output.</p>
+      <div class="code-block"><span class="cm"># execution/tasks.py — run_in_docker()</span>
+<span class="kw">for</span> test_case <span class="kw">in</span> submission.question.test_cases.<span class="fn">all</span>():
+    output, error, exec_time = <span class="fn">run_in_docker</span>(
+        code=submission.code,
+        language=submission.language,
+        input_data=test_case.input_data,
+    )
+    passed = (output.<span class="fn">strip</span>() == test_case.expected_output.<span class="fn">strip</span>())
+
+<span class="cm"># Inside run_in_docker:</span>
+result = client.containers.<span class="fn">run</span>(
+    <span class="str">'python:3.11-alpine'</span>,
+    [<span class="str">'python3'</span>, <span class="str">'-c'</span>, wrapped_code],
+    network_disabled=<span class="cls">True</span>,   <span class="cm"># no internet</span>
+    mem_limit=<span class="str">'128m'</span>,        <span class="cm"># memory cap</span>
+    remove=<span class="cls">True</span>,             <span class="cm"># auto-destroy container</span>
+)</div>
+    </div>
+  </div>
+
+  <!-- 11 -->
+  <div class="step s-postgres">
+    <div class="step-spine">
+      <div class="step-num">11</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Postgres</span>
+        <span class="step-title">Save Result rows, update submission status to passed/failed</span>
+      </div>
+      <p class="step-desc">One Result row is written per test case. Then the submission status is updated to passed (all tests passed) or failed.</p>
+      <div class="code-block"><span class="cm"># execution/tasks.py</span>
+    <span class="cls">Result</span>.objects.<span class="fn">create</span>(
+        submission=submission,
+        test_case=test_case,
+        passed=passed,
+        actual_output=output,
+        execution_time_ms=exec_time,
+        error_message=error,
+    )
+
+submission.status = <span class="str">'passed'</span> <span class="kw">if</span> all_passed <span class="kw">else</span> <span class="str">'failed'</span>
+submission.<span class="fn">save</span>()
+
+<span class="cm"># Postgres after this step:</span>
+<span class="cm"># submissions: id=42, status='passed'</span>
+<span class="cm"># results: 3 rows (one per test case)</span></div>
+    </div>
+  </div>
+
+  <!-- 12 -->
+  <div class="step s-redis">
+    <div class="step-spine">
+      <div class="step-num">12</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Redis</span>
+        <span class="step-title">Celery publishes result to pub/sub channel</span>
+      </div>
+      <p class="step-desc">Celery publishes the final status to the "submission:42" Redis channel. Any subscriber listening on that channel is immediately notified. Celery doesn't know or care who's listening.</p>
+      <div class="code-block"><span class="cm"># execution/tasks.py</span>
+r = redis.<span class="cls">Redis</span>.<span class="fn">from_url</span>(os.environ.<span class="fn">get</span>(<span class="str">'REDIS_URL'</span>))
+channel = <span class="str">f"submission:{submission_id}"</span>       <span class="cm"># "submission:42"</span>
+payload = json.<span class="fn">dumps</span>({<span class="str">'status'</span>: submission.status})
+r.<span class="fn">publish</span>(channel, payload)
+
+<span class="cm"># Redis PUBLISH command:</span>
+<span class="cm"># PUBLISH submission:42 '{"status": "passed"}'</span>
+<span class="cm"># → Redis immediately wakes everyone subscribed to this channel</span></div>
+    </div>
+  </div>
+
+  <!-- 13 -->
+  <div class="step s-django">
+    <div class="step-spine">
+      <div class="step-num">13</div>
+      <div class="step-line"></div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Django</span>
+        <span class="step-title">SSE endpoint forwards each status — closes only on terminal</span>
+      </div>
+      <p class="step-desc">The SSE loop unblocks each time Celery publishes. It forwards every message to the browser and only closes the stream when the status is a terminal value — passed, failed, or error. Intermediate statuses like "running" flow through and the stream stays open.</p>
+      <div class="code-block"><span class="cm"># submissions/sse.py</span>
+terminal = {<span class="str">'passed'</span>, <span class="str">'failed'</span>, <span class="str">'error'</span>}
+<span class="kw">for</span> message <span class="kw">in</span> pubsub.<span class="fn">listen</span>():
+    <span class="kw">if</span> message[<span class="str">'type'</span>] == <span class="str">'message'</span>:
+        payload = message[<span class="str">'data'</span>].<span class="fn">decode</span>(<span class="str">'utf-8'</span>)
+        <span class="kw">yield</span> <span class="str">f"data: {payload}\n\n"</span>        <span class="cm"># forward to browser</span>
+        <span class="kw">if</span> json.<span class="fn">loads</span>(payload).<span class="fn">get</span>(<span class="str">'status'</span>) <span class="kw">in</span> terminal:
+            <span class="kw">break</span>                           <span class="cm"># terminal — close stream</span>
+
+pubsub.<span class="fn">unsubscribe</span>(channel)
+
+<span class="cm"># Messages forwarded in order:</span>
+<span class="cm"># data: {"status": "running"}   ← step 9 publish, stream stays open</span>
+<span class="cm"># data: {"status": "passed"}    ← step 12 publish, stream closes</span></div>
+    </div>
+  </div>
+
+  <!-- 14 -->
+  <div class="step s-browser">
+    <div class="step-spine">
+      <div class="step-num">14</div>
+    </div>
+    <div class="step-body">
+      <div class="step-header">
+        <span class="actor-tag">Browser</span>
+        <span class="step-title">Receive result — show passed ✓ or failed ✗</span>
+      </div>
+      <p class="step-desc">The browser EventSource fires for every message. Intermediate statuses update the UI in real-time. When a terminal status arrives, the stream is closed and the final result is shown.</p>
+      <div class="code-block"><span class="cm">// Browser — EventSource handler fires for each message</span>
+es.<span class="fn">onmessage</span> = (e) => {
+  <span class="kw">const</span> data = <span class="cls">JSON</span>.<span class="fn">parse</span>(e.data)
+
+  <span class="cm">// ① status: "waiting"  → "Waiting in queue…"</span>
+  <span class="cm">// ② status: "running"  → "Running your code…" ← new</span>
+  <span class="cm">// ③ status: "passed"   → "✓ Passed"</span>
+  <span class="fn">updateStatusUI</span>(data.status)
+
+  <span class="kw">if</span> (data.status === <span class="str">'passed'</span> || data.status === <span class="str">'failed'</span> || data.status === <span class="str">'error'</span>) {
+    es.<span class="fn">close</span>()                        <span class="cm">// terminal — close SSE stream</span>
+  }
+}</div>
+    </div>
+  </div>
+
+</div><!-- /steps -->
+
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Flow complete</div><div class="divider-line"></div></div>
+
+<!-- REDIS SUMMARY -->
+<div style="margin-top:32px; background:#1a1f2e; border:1px solid #2a3045; border-radius:12px; padding:28px;">
+  <div style="font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:16px;">Redis — Two distinct uses in this flow</div>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    <thead>
+      <tr style="border-bottom:1px solid #2a3045;">
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Use</th>
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Command</th>
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Key / Channel</th>
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #1e2538;">
+        <td style="padding:10px 12px;color:#f59e0b;font-weight:600;">Job queue</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">LPUSH + BRPOP</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">celery</td>
+        <td style="padding:10px 12px;color:#64748b;">Hand tasks to Celery worker without polling. Worker sleeps until a job arrives.</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 12px;color:#f59e0b;font-weight:600;">Pub/Sub</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">PUBLISH + SUBSCRIBE</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">submission:42</td>
+        <td style="padding:10px 12px;color:#64748b;">Notify Django SSE endpoint the moment Celery finishes. Django pushes to browser.</td>
+      </tr>
+    </tbody>
+  </table>
+  <div style="margin-top:16px;padding:12px 14px;background:#0f1117;border:1px solid #1e2538;border-left:3px solid #8b5cf6;border-radius:6px;font-size:12px;color:#64748b;font-family:'JetBrains Mono',monospace;">
+    <span style="color:#8b5cf6;font-weight:600;">Postgres</span> — attempt counting moved here (SELECT COUNT). Simpler, no Redis dependency, trainer-configurable limit via PlagiarismPolicy.max_attempts.
+  </div>
+</div>
+
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Database Schema Reference</div><div class="divider-line"></div></div>
+
+<!-- SCHEMA SECTION -->
+<div>
+
+  <!-- accounts -->
+  <div class="app-section">
+    <div class="app-section-label" style="color:#14b8a6;">accounts<span></span></div>
+    <div class="models-grid">
+      <div class="model-card" style="border-top:2px solid #14b8a6;max-width:300px;">
+        <div class="model-card-head">User <span class="model-app-badge" style="background:rgba(20,184,166,0.15);color:#14b8a6;">AbstractUser</span></div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">role</span><span class="ft ft-enum">enum</span><span class="field-note">student · trainer · admin</span></div>
+          <div class="field-row"><span class="field-name">cohort</span><span class="ft ft-text">char</span></div>
+          <div class="field-row"><span class="field-name">score</span><span class="ft ft-prop">@property</span><span class="field-note">SUM of passed pts</span></div>
+          <div class="field-row"><span class="field-name">current_streak</span><span class="ft ft-prop">@property</span><span class="field-note">consecutive days</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- exams -->
+  <div class="app-section">
+    <div class="app-section-label" style="color:#0ea5e9;">exams<span></span></div>
+    <div class="models-grid">
+      <div class="model-card" style="border-top:2px solid #0ea5e9;">
+        <div class="model-card-head">Exam</div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">title</span><span class="ft ft-text">char</span></div>
+          <div class="field-row"><span class="field-name">duration_minutes</span><span class="ft ft-int">int</span></div>
+          <div class="field-row"><span class="field-name">is_active</span><span class="ft ft-bool">bool</span></div>
+          <div class="field-row"><span class="field-name">start_time / end_time</span><span class="ft ft-text">datetime</span></div>
+          <div class="field-row"><span class="field-name">created_by</span><span class="ft ft-fk">FK → User</span></div>
+        </div>
+      </div>
+      <div class="model-card" style="border-top:2px solid #0ea5e9;">
+        <div class="model-card-head">Question</div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">exam</span><span class="ft ft-fk">FK → Exam</span></div>
+          <div class="field-row"><span class="field-name">language</span><span class="ft ft-enum">enum</span><span class="field-note">python · js · java · cpp</span></div>
+          <div class="field-row"><span class="field-name">difficulty</span><span class="ft ft-enum">enum</span><span class="field-note">easy · medium · hard</span></div>
+          <div class="field-row"><span class="field-name">max_attempts</span><span class="ft ft-int">int</span></div>
+          <div class="field-row"><span class="field-name">points</span><span class="ft ft-prop">@property</span><span class="field-note">10 / 20 / 30</span></div>
+        </div>
+      </div>
+      <div class="model-card" style="border-top:2px solid #0ea5e9;">
+        <div class="model-card-head">TestCase</div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">question</span><span class="ft ft-fk">FK → Question</span></div>
+          <div class="field-row"><span class="field-name">input_data</span><span class="ft ft-text">text</span></div>
+          <div class="field-row"><span class="field-name">expected_output</span><span class="ft ft-text">text</span></div>
+          <div class="field-row"><span class="field-name">is_hidden</span><span class="ft ft-bool">bool</span><span class="field-note">trainer-only</span></div>
+        </div>
+      </div>
+      <div class="model-card" style="border-top:2px solid #0ea5e9;max-width:240px;">
+        <div class="model-card-head">ExamEnrollment</div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">exam</span><span class="ft ft-fk">FK → Exam</span></div>
+          <div class="field-row"><span class="field-name">student</span><span class="ft ft-fk">FK → User</span></div>
+          <div class="field-row"><span class="field-name">(exam, student)</span><span class="ft ft-uniq">unique_together</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- submissions -->
+  <div class="app-section">
+    <div class="app-section-label" style="color:#6366f1;">submissions<span></span></div>
+    <div class="models-grid">
+      <div class="model-card" style="border-top:2px solid #6366f1;max-width:100%;">
+        <div class="model-card-head">Submission <span class="model-app-badge" style="background:rgba(99,102,241,0.15);color:#818cf8;">state machine · behaviour signals · denorm exam FK</span></div>
+        <div class="model-fields" style="display:grid;grid-template-columns:1fr 1fr;">
+          <div>
+            <div class="field-row"><span class="field-name">student</span><span class="ft ft-fk">FK → User</span></div>
+            <div class="field-row"><span class="field-name">question</span><span class="ft ft-fk">FK → Question</span></div>
+            <div class="field-row"><span class="field-name">exam</span><span class="ft ft-fk">FK → Exam</span><span class="field-note">denorm</span></div>
+            <div class="field-row"><span class="field-name">code</span><span class="ft ft-text">text</span></div>
+            <div class="field-row"><span class="field-name">language</span><span class="ft ft-enum">enum</span></div>
+            <div class="field-row"><span class="field-name">attempt_number</span><span class="ft ft-int">stored</span></div>
+            <div class="field-row"><span class="field-name">status</span><span class="ft ft-enum">state machine</span></div>
+          </div>
+          <div>
+            <div class="field-row"><span class="field-name">ip_address</span><span class="ft ft-text">char</span><span class="field-note">audit</span></div>
+            <div class="field-row"><span class="field-name">normalized_code</span><span class="ft ft-text">text</span><span class="field-note">plagiarism</span></div>
+            <div class="field-row"><span class="field-name">plagiarism_score</span><span class="ft ft-int">float</span></div>
+            <div class="field-row"><span class="field-name">had_paste_event</span><span class="ft ft-bool">bool</span></div>
+            <div class="field-row"><span class="field-name">tab_switch_count</span><span class="ft ft-int">int</span></div>
+            <div class="field-row"><span class="field-name">time_to_complete_seconds</span><span class="ft ft-int">int</span></div>
+            <div class="field-row"><span class="field-name">percent_time_used</span><span class="ft ft-prop">@property</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- results -->
+  <div class="app-section">
+    <div class="app-section-label" style="color:#3b82f6;">results<span></span></div>
+    <div class="models-grid">
+      <div class="model-card" style="border-top:2px solid #3b82f6;max-width:320px;">
+        <div class="model-card-head">Result</div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">submission</span><span class="ft ft-fk">FK → Submission</span></div>
+          <div class="field-row"><span class="field-name">test_case</span><span class="ft ft-fk">FK → TestCase</span></div>
+          <div class="field-row"><span class="field-name">passed</span><span class="ft ft-bool">bool</span></div>
+          <div class="field-row"><span class="field-name">actual_output</span><span class="ft ft-text">text</span></div>
+          <div class="field-row"><span class="field-name">execution_time_ms</span><span class="ft ft-int">int</span></div>
+          <div class="field-row"><span class="field-name">(submission, test_case)</span><span class="ft ft-uniq">unique_together</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- plagiarism -->
+  <div class="app-section">
+    <div class="app-section-label" style="color:#f43f5e;">plagiarism<span></span></div>
+    <div class="models-grid">
+      <div class="model-card" style="border-top:2px solid #f43f5e;">
+        <div class="model-card-head">PlagiarismPolicy <span class="model-app-badge" style="background:rgba(16,185,129,0.15);color:#34d399;">singleton</span></div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">max_attempts</span><span class="ft ft-int">int</span></div>
+          <div class="field-row"><span class="field-name">min_risk_score</span><span class="ft ft-int">float</span></div>
+          <div class="field-row"><span class="field-name">similarity_threshold</span><span class="ft ft-int">float</span></div>
+          <div class="field-row"><span class="field-name">paste_weight / time_weight …</span><span class="ft ft-int">float</span></div>
+          <div class="field-row"><span class="field-name">easy / medium / hard _baseline_s</span><span class="ft ft-int">int</span></div>
+        </div>
+      </div>
+      <div class="model-card" style="border-top:2px solid #f43f5e;">
+        <div class="model-card-head">BehaviouralFlag <span class="model-app-badge" style="background:rgba(59,130,246,0.15);color:#60a5fa;">extension</span></div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">submission</span><span class="ft ft-11">1:1 → Submission</span></div>
+          <div class="field-row"><span class="field-name">risk_score</span><span class="ft ft-int">float</span></div>
+          <div class="field-row"><span class="field-name">confidence</span><span class="ft ft-enum">enum</span><span class="field-note">low · medium · high</span></div>
+          <div class="field-row"><span class="field-name">signals_triggered</span><span class="ft ft-json">JSON</span></div>
+          <div class="field-row"><span class="field-name">review_status</span><span class="ft ft-enum">enum</span><span class="field-note">pending · confirmed · dismissed</span></div>
+        </div>
+      </div>
+      <div class="model-card" style="border-top:2px solid #f43f5e;">
+        <div class="model-card-head">PlagiarismFlag</div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">submission_1</span><span class="ft ft-fk">FK → Submission</span></div>
+          <div class="field-row"><span class="field-name">submission_2</span><span class="ft ft-fk">FK → Submission</span></div>
+          <div class="field-row"><span class="field-name">similarity_score</span><span class="ft ft-int">float</span></div>
+          <div class="field-row"><span class="field-name">review_status</span><span class="ft ft-enum">enum</span></div>
+          <div class="field-row"><span class="field-name">(submission_1, submission_2)</span><span class="ft ft-uniq">unique_together</span></div>
+        </div>
+      </div>
+      <div class="model-card" style="border-top:2px solid #f43f5e;">
+        <div class="model-card-head">PolicyVersion <span class="model-app-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;">audit log</span></div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">snapshot_before</span><span class="ft ft-json">JSON</span></div>
+          <div class="field-row"><span class="field-name">snapshot_after</span><span class="ft ft-json">JSON</span></div>
+          <div class="field-row"><span class="field-name">changed_by</span><span class="ft ft-fk">FK → User</span></div>
+          <div class="field-row"><span class="field-name">change_reason</span><span class="ft ft-text">text</span></div>
+        </div>
+      </div>
+      <div class="model-card" style="border-top:2px solid #f43f5e;max-width:260px;">
+        <div class="model-card-head">ReviewAuditLog</div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">flag_type</span><span class="ft ft-enum">enum</span></div>
+          <div class="field-row"><span class="field-name">flag_id</span><span class="ft ft-int">int</span></div>
+          <div class="field-row"><span class="field-name">action / note</span><span class="ft ft-text">char</span></div>
+          <div class="field-row"><span class="field-name">reviewed_by</span><span class="ft ft-fk">FK → User</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- support -->
+  <div class="app-section">
+    <div class="app-section-label" style="color:#64748b;">support<span></span></div>
+    <div class="models-grid">
+      <div class="model-card" style="border-top:2px solid #64748b;max-width:320px;">
+        <div class="model-card-head">DisputeRequest</div>
+        <div class="model-fields">
+          <div class="field-row"><span class="field-name">student</span><span class="ft ft-fk">FK → User</span></div>
+          <div class="field-row"><span class="field-name">flag_type</span><span class="ft ft-enum">enum</span><span class="field-note">behavioural · similarity</span></div>
+          <div class="field-row"><span class="field-name">flag_id</span><span class="ft ft-int">int</span></div>
+          <div class="field-row"><span class="field-name">student_note</span><span class="ft ft-text">text</span></div>
+          <div class="field-row"><span class="field-name">status</span><span class="ft ft-enum">enum</span><span class="field-note">open · resolved · escalated</span></div>
+          <div class="field-row"><span class="field-name">resolved_by</span><span class="ft ft-fk">FK → User</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /schema section -->
+
+<!-- TABLE CONNECTIONS -->
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Table Connections</div><div class="divider-line"></div></div>
+
+<div style="background:#1a1f2e;border:1px solid #2a3045;border-radius:12px;padding:24px;">
+  <table class="rel-table">
+    <thead>
+      <tr>
+        <th>From</th>
+        <th>Field</th>
+        <th></th>
+        <th>To</th>
+        <th>Type</th>
+        <th>Pattern / Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="rel-from">Question</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.exam</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">Exam</td>
+        <td><span class="rel-type rt-n1">N → 1</span></td>
+        <td class="rel-pattern">Normalization — many questions per exam; exam title lives in one row</td>
+      </tr>
+      <tr>
+        <td class="rel-from">TestCase</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.question</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">Question</td>
+        <td><span class="rel-type rt-n1">N → 1</span></td>
+        <td class="rel-pattern">Normalization — expected_output belongs to the question, not every result</td>
+      </tr>
+      <tr>
+        <td class="rel-from">ExamEnrollment</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.exam + .student</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">Exam + User</td>
+        <td><span class="rel-type rt-jn">Junction</span></td>
+        <td class="rel-pattern">M:N resolved — student enrolls in many exams; exam has many students</td>
+      </tr>
+      <tr>
+        <td class="rel-from">Submission</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.student / .question</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">User + Question</td>
+        <td><span class="rel-type rt-n1">N → 1</span></td>
+        <td class="rel-pattern">Core FKs — submission always belongs to one student and one question</td>
+      </tr>
+      <tr>
+        <td class="rel-from">Submission</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.exam</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">Exam</td>
+        <td><span class="rel-type rt-n1">N → 1</span></td>
+        <td class="rel-pattern"><strong style="color:#fbbf24;">Denormalization</strong> — also reachable via .question.exam, but stored here for direct one-table filtering</td>
+      </tr>
+      <tr>
+        <td class="rel-from">Result</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.submission</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">Submission</td>
+        <td><span class="rel-type rt-1n">1 → N</span></td>
+        <td class="rel-pattern">One submission runs against N test cases → N Result rows, one per test case</td>
+      </tr>
+      <tr>
+        <td class="rel-from">Result</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.test_case</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">TestCase</td>
+        <td><span class="rel-type rt-n1">N → 1</span></td>
+        <td class="rel-pattern">Normalization — actual_output goes on Result; expected_output stays on TestCase</td>
+      </tr>
+      <tr>
+        <td class="rel-from">BehaviouralFlag</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.submission</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">Submission</td>
+        <td><span class="rel-type rt-11">1 : 1</span></td>
+        <td class="rel-pattern"><strong style="color:#60a5fa;">Extension</strong> — adds plagiarism data without polluting the core Submission table</td>
+      </tr>
+      <tr>
+        <td class="rel-from">PlagiarismFlag</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.submission_1 / ._2</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">Submission × 2</td>
+        <td><span class="rel-type rt-n1">N → 1</span></td>
+        <td class="rel-pattern">Cross-comparison — one row per similar pair; unique_together prevents duplicate pairs</td>
+      </tr>
+      <tr>
+        <td class="rel-from">PolicyVersion</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.changed_by</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">User</td>
+        <td><span class="rel-type rt-n1">N → 1</span></td>
+        <td class="rel-pattern">Audit trail — immutable before/after snapshots of every policy change</td>
+      </tr>
+      <tr>
+        <td class="rel-from">DisputeRequest</td>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#64748b;">.student / .resolved_by</td>
+        <td class="rel-arrow">→</td>
+        <td class="rel-to">User × 2</td>
+        <td><span class="rel-type rt-n1">N → 1</span></td>
+        <td class="rel-pattern">Two FKs to same table — different roles (submitter vs resolver)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- DESIGN PATTERNS -->
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Design Patterns Used</div><div class="divider-line"></div></div>
+
+<div class="pattern-grid">
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(16,185,129,0.15);color:#34d399;">Normalization</span></div>
+    <div class="pattern-example">Exam → Question → TestCase</div>
+    <div class="pattern-why">Each piece of data lives in exactly one place. TestCase.expected_output is never duplicated — update it once and every query sees the fix. Avoids update anomalies.</div>
+  </div>
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;">Denormalization</span></div>
+    <div class="pattern-example">Submission.exam (also via .question.exam)</div>
+    <div class="pattern-why">Submission stores exam FK directly so trainers can filter all submissions by exam in one table scan. Safe because exam never changes after a submission is created.</div>
+  </div>
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(20,184,166,0.15);color:#2dd4bf;">Stored vs @property</span></div>
+    <div class="pattern-example">attempt_number (stored) vs score, streak (@property)</div>
+    <div class="pattern-why">attempt_number must be checked atomically at write time to enforce the limit — computing it later would allow race conditions. score and streak are always derivable from existing rows and never filtered on.</div>
+  </div>
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(16,185,129,0.15);color:#34d399;">Singleton</span></div>
+    <div class="pattern-example">PlagiarismPolicy.get() → always pk=1</div>
+    <div class="pattern-why">Trainers need to change detection thresholds at runtime without a code redeploy. A DB singleton gives a runtime-editable config row. PolicyVersion audits every change to it.</div>
+  </div>
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(59,130,246,0.15);color:#60a5fa;">OneToOne Extension</span></div>
+    <div class="pattern-example">BehaviouralFlag.submission (1:1)</div>
+    <div class="pattern-why">Plagiarism signals are a separate concern from the core submission. Keeping them in their own table means the Submission model stays clean, and BehaviouralFlag can evolve independently. 1:1 guarantees at most one flag per submission.</div>
+  </div>
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(236,72,153,0.15);color:#f472b6;">unique_together</span></div>
+    <div class="pattern-example">Result(submission, test_case) · ExamEnrollment(exam, student)</div>
+    <div class="pattern-why">DB-level guarantee that application bugs can't create duplicate rows. A student can't be enrolled twice; a test case can't be scored twice per submission. Application logic enforces logic; the DB enforces invariants.</div>
+  </div>
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(99,102,241,0.15);color:#818cf8;">Status State Machine</span></div>
+    <div class="pattern-example">pending → running → passed / failed / error</div>
+    <div class="pattern-why">CharField with choices stores current state. The Celery task enforces valid transitions in code. CharField (not an int) because string statuses are self-documenting in queries, the admin, and logs.</div>
+  </div>
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;">Audit Log</span></div>
+    <div class="pattern-example">PolicyVersion: snapshot_before / snapshot_after</div>
+    <div class="pattern-why">Every policy change is captured as an immutable before/after pair. JSONField is used instead of FKs to a policy version table because the schema itself may grow — JSON captures whatever existed at that moment.</div>
+  </div>
+  <div class="pattern-card">
+    <div class="pattern-name"><span class="pattern-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;">JSONField for Flexible Data</span></div>
+    <div class="pattern-example">BehaviouralFlag.signals_triggered</div>
+    <div class="pattern-why">The set of triggered signals varies per submission and may grow as new signals are added. JSON avoids a rigid SignalResult join table. Rule: use JSONField only for read-only, non-filterable, schema-flexible data.</div>
+  </div>
+</div>
+
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Plagiarism Detection Flow</div><div class="divider-line"></div></div>
+
+<!-- PLAGIARISM TRIGGER MAP -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:32px;">
+  <div style="background:#1a1f2e;border:1px solid #2a3045;border-top:2px solid #e63946;border-radius:10px;padding:20px;">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#e63946;margin-bottom:10px;">Phase 1 — Behavioural Check</div>
+    <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:6px;">Fires when exam closes (runs synchronously, before Phase 2)</div>
+    <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:12px;">O(N) — runs for all exam submissions in batch. Called synchronously inside run_exam_plagiarism_check before Phase 2 is queued.</div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;background:#0a0d14;border-left:3px solid #e63946;padding:10px 14px;border-radius:6px;color:#94a3b8;">
+<span style="color:#546e7a;"># plagiarism/tasks.py — run_exam_plagiarism_check</span>
+<span style="color:#c792ea;">for</span> sub <span style="color:#c792ea;">in</span> submissions:
+    run_behavioural_check(sub.id)  <span style="color:#546e7a;"># synchronous, not .delay()</span></div>
+  </div>
+  <div style="background:#1a1f2e;border:1px solid #2a3045;border-top:2px solid #f59e0b;border-radius:10px;padding:20px;">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#f59e0b;margin-bottom:10px;">Phase 2 — TF-IDF Cross-Comparison</div>
+    <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:6px;">Fires when exam closes</div>
+    <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:12px;">O(K×N) — only high-confidence suspects compared against full class. Triggered by Django signal.</div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;background:#0a0d14;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;color:#94a3b8;">
+<span style="color:#546e7a;"># exams/signals.py — pre_save</span>
+<span style="color:#c792ea;">if</span> previous.is_active <span style="color:#c792ea;">and not</span> instance.is_active:
+    run_exam_plagiarism_check.<span style="color:#82aaff;">delay</span>(exam.pk)</div>
+  </div>
+</div>
+
+<!-- PHASE 1 STEPS -->
+<div style="font-size:13px;font-weight:700;color:#e63946;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
+  <span style="background:rgba(230,57,70,0.15);padding:3px 12px;border-radius:20px;">Phase 1 — Behavioural Signals</span>
+  <span style="height:1px;flex:1;background:#1e2538;display:block;"></span>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px;">
+  <!-- paste -->
+  <div style="background:#1a1f2e;border:1px solid #2a3045;border-radius:10px;overflow:hidden;">
+    <div style="padding:10px 14px;border-bottom:1px solid #2a3045;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:12px;font-weight:700;color:#f1f5f9;">paste_signal</span>
+      <span style="font-size:10px;font-weight:700;color:#e63946;background:rgba(230,57,70,0.12);padding:2px 8px;border-radius:6px;">weight 0.40</span>
+    </div>
+    <div style="padding:12px 14px;font-size:11.5px;color:#64748b;line-height:1.6;margin-bottom:8px;">Pasted chars ÷ total code length</div>
+    <div style="padding:0 14px 12px;">
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid #1e2538;"><span style="color:#94a3b8;">≥ 70% pasted</span><span style="color:#f87171;font-weight:700;">1.0</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid #1e2538;"><span style="color:#94a3b8;">≥ 50% pasted</span><span style="color:#fb923c;font-weight:700;">0.7</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;"><span style="color:#94a3b8;">≥ 30% pasted</span><span style="color:#fbbf24;font-weight:700;">0.3</span></div>
+    </div>
+  </div>
+  <!-- time -->
+  <div style="background:#1a1f2e;border:1px solid #2a3045;border-radius:10px;overflow:hidden;">
+    <div style="padding:10px 14px;border-bottom:1px solid #2a3045;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:12px;font-weight:700;color:#f1f5f9;">time_signal</span>
+      <span style="font-size:10px;font-weight:700;color:#e63946;background:rgba(230,57,70,0.12);padding:2px 8px;border-radius:6px;">weight 0.30</span>
+    </div>
+    <div style="padding:12px 14px;font-size:11.5px;color:#64748b;line-height:1.6;margin-bottom:4px;">Solve time vs difficulty baseline</div>
+    <div style="padding:0 14px 4px;font-size:10px;color:#475569;">easy=90s · medium=240s · hard=480s</div>
+    <div style="padding:0 14px 12px;">
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid #1e2538;"><span style="color:#94a3b8;">≤ 20% of baseline</span><span style="color:#f87171;font-weight:700;">1.0</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid #1e2538;"><span style="color:#94a3b8;">≤ 40% of baseline</span><span style="color:#fb923c;font-weight:700;">0.7</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;"><span style="color:#94a3b8;">≤ 60% of baseline</span><span style="color:#fbbf24;font-weight:700;">0.3</span></div>
+    </div>
+  </div>
+  <!-- tab -->
+  <div style="background:#1a1f2e;border:1px solid #2a3045;border-radius:10px;overflow:hidden;">
+    <div style="padding:10px 14px;border-bottom:1px solid #2a3045;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:12px;font-weight:700;color:#f1f5f9;">tab_switch_signal</span>
+      <span style="font-size:10px;font-weight:700;color:#94a3b8;background:rgba(100,116,139,0.12);padding:2px 8px;border-radius:6px;">weight 0.15</span>
+    </div>
+    <div style="padding:12px 14px;font-size:11.5px;color:#64748b;line-height:1.6;margin-bottom:8px;">Tab switches during this question</div>
+    <div style="padding:0 14px 12px;">
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid #1e2538;"><span style="color:#94a3b8;">≥ 5 switches</span><span style="color:#f87171;font-weight:700;">1.0</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid #1e2538;"><span style="color:#94a3b8;">≥ 3 switches</span><span style="color:#fb923c;font-weight:700;">0.5</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;"><span style="color:#94a3b8;">≥ 1 switch</span><span style="color:#fbbf24;font-weight:700;">0.2</span></div>
+    </div>
+  </div>
+  <!-- surprise -->
+  <div style="background:#1a1f2e;border:1px solid #2a3045;border-radius:10px;overflow:hidden;">
+    <div style="padding:10px 14px;border-bottom:1px solid #2a3045;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:12px;font-weight:700;color:#f1f5f9;">submission_surprise</span>
+      <span style="font-size:10px;font-weight:700;color:#94a3b8;background:rgba(100,116,139,0.12);padding:2px 8px;border-radius:6px;">weight 0.15</span>
+    </div>
+    <div style="padding:12px 14px;font-size:11.5px;color:#64748b;line-height:1.6;margin-bottom:4px;">Code similarity vs previous attempt (SequenceMatcher)</div>
+    <div style="padding:0 14px 12px;">
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid #1e2538;"><span style="color:#94a3b8;">&lt;25% similar + passed</span><span style="color:#f87171;font-weight:700;">1.0</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid #1e2538;"><span style="color:#94a3b8;">&lt;40% similar</span><span style="color:#fb923c;font-weight:700;">0.6</span></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px;"><span style="color:#94a3b8;">&lt;55% similar</span><span style="color:#fbbf24;font-weight:700;">0.2</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- COMBINED SCORER -->
+<div style="background:#1a1f2e;border:1px solid #2a3045;border-radius:10px;padding:20px;margin-bottom:28px;">
+  <div style="font-size:12px;font-weight:700;color:#f1f5f9;margin-bottom:12px;">Combined Risk Score + Confidence</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+    <div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;background:#0a0d14;border-left:3px solid #e63946;padding:12px 16px;border-radius:6px;line-height:1.8;color:#94a3b8;">
+risk = <span style="color:#f59e0b;">0.40</span>×paste + <span style="color:#f59e0b;">0.30</span>×time
+     + <span style="color:#f59e0b;">0.15</span>×tab   + <span style="color:#f59e0b;">0.15</span>×surprise
+
+<span style="color:#546e7a;"># if risk &gt; 0.2 → BehaviouralFlag created</span>
+<span style="color:#546e7a;"># if risk ≤ 0.2 → nothing stored (noise)</span></div>
+    </div>
+    <div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:10px;">Confidence based on how many signals fired:</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:11px;font-weight:700;padding:3px 12px;border-radius:20px;background:rgba(248,113,113,0.15);color:#f87171;">HIGH</span><span style="font-size:12px;color:#64748b;">3 or more signals fired</span></div>
+        <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:11px;font-weight:700;padding:3px 12px;border-radius:20px;background:rgba(251,146,60,0.15);color:#fb923c;">MEDIUM</span><span style="font-size:12px;color:#64748b;">2 signals fired</span></div>
+        <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:11px;font-weight:700;padding:3px 12px;border-radius:20px;background:rgba(251,191,36,0.15);color:#fbbf24;">LOW</span><span style="font-size:12px;color:#64748b;">1 signal fired</span></div>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:#475569;">Only HIGH confidence students enter Phase 2 cross-comparison.</div>
+    </div>
+  </div>
+</div>
+
+<!-- PHASE 2 STEPS -->
+<div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
+  <span style="background:rgba(245,158,11,0.15);padding:3px 12px;border-radius:20px;">Phase 2 — TF-IDF Cross-Comparison</span>
+  <span style="height:1px;flex:1;background:#1e2538;display:block;"></span>
+</div>
+
+<div class="steps" style="margin-bottom:28px;">
+
+  <div class="step s-celery">
+    <div class="step-spine"><div class="step-num">A</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-header"><span class="actor-tag">Celery</span><span class="step-title">Exam closes → signal → queue per-question tasks</span></div>
+      <p class="step-desc">Django's <code>pre_save</code> signal detects <code>is_active True→False</code>. It queues one <code>run_question_plagiarism_check</code> per question, staggered 30 seconds apart so Celery workers don't CPU-spike simultaneously.</p>
+      <div class="code-block"><span class="cm"># exams/signals.py</span>
+<span class="kw">if</span> previous.is_active <span class="kw">and not</span> instance.is_active:
+    <span class="fn">run_exam_plagiarism_check</span>.<span class="fn">delay</span>(instance.pk)
+
+<span class="cm"># plagiarism/tasks.py — run_exam_plagiarism_check</span>
+<span class="kw">for</span> i, question <span class="kw">in</span> <span class="fn">enumerate</span>(exam.questions.<span class="fn">all</span>()):
+    <span class="fn">run_question_plagiarism_check</span>.<span class="fn">apply_async</span>(
+        args=[question.id],
+        countdown=i * <span class="num">30</span>,  <span class="cm"># stagger: Q1 now, Q2 in 30s, Q3 in 60s...</span>
+    )</div>
+    </div>
+  </div>
+
+  <div class="step s-celery">
+    <div class="step-spine"><div class="step-num">B</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-header"><span class="actor-tag">Celery</span><span class="step-title">Filter suspects — skip question if none are HIGH confidence</span></div>
+      <p class="step-desc">Pull all students who have a HIGH-confidence BehaviouralFlag for this question. If zero suspects, the question is skipped entirely — no TF-IDF needed. This is the key cost gate.</p>
+      <div class="code-block"><span class="cm"># plagiarism/tasks.py — run_question_plagiarism_check</span>
+high_risk_student_ids = <span class="fn">set</span>(
+    <span class="cls">BehaviouralFlag</span>.objects
+    .<span class="fn">filter</span>(submission__question=question, confidence=<span class="str">'high'</span>)
+    .<span class="fn">values_list</span>(<span class="str">'submission__student_id'</span>, flat=<span class="cls">True</span>)
+)
+
+<span class="kw">if not</span> high_risk_student_ids:
+    <span class="kw">return</span>  <span class="cm"># ← exits here for clean classes — no compute wasted</span></div>
+    </div>
+  </div>
+
+  <div class="step s-celery">
+    <div class="step-spine"><div class="step-num">C</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-header"><span class="actor-tag">Celery</span><span class="step-title">Normalize all N submissions — strip comments, rename variables</span></div>
+      <p class="step-desc">Get the best submission per student (passed attempt first, else latest). Normalize all N code strings so variable names don't affect similarity. Two students writing the same algorithm with different variable names become near-identical after normalization.</p>
+      <div class="code-block"><span class="cm"># Code normalization pipeline:</span>
+<span class="cm"># 1. Strip comments (# lines for Python, // and /* */ for JS)</span>
+<span class="cm"># 2. Remove blank lines</span>
+<span class="cm"># 3. AST parse → rename user-defined names to VAR_0, VAR_1...</span>
+<span class="cm">#    (builtins like print, len, range are preserved)</span>
+
+<span class="cm"># Before normalization:</span>
+<span class="kw">def</span> <span class="fn">add_numbers</span>(first, second):
+    result = first + second
+    <span class="kw">return</span> result
+
+<span class="cm"># After normalization:</span>
+<span class="kw">def</span> <span class="fn">VAR_0</span>(VAR_1, VAR_2):
+    VAR_3 = VAR_1 + VAR_2
+    <span class="kw">return</span> VAR_3</div>
+    </div>
+  </div>
+
+  <div class="step s-celery">
+    <div class="step-spine"><div class="step-num">D</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-header"><span class="actor-tag">Celery</span><span class="step-title">TF-IDF vectorize full corpus → cosine similarity matrix</span></div>
+      <p class="step-desc">Vectorize all N submissions at once (fit_transform). TF-IDF converts code into a weighted token vector — tokens rare in the corpus get higher weight. Cosine similarity then gives a 0–1 score for every pair in one matrix multiplication.</p>
+      <div class="code-block">vectorizer = <span class="cls">TfidfVectorizer</span>()
+matrix = vectorizer.<span class="fn">fit_transform</span>(normalized)   <span class="cm"># N × V sparse matrix</span>
+sim_matrix = <span class="fn">cosine_similarity</span>(matrix)            <span class="cm"># N × N dense matrix</span>
+
+<span class="cm"># sim_matrix[i][j] = similarity between submission i and j</span>
+<span class="cm"># 1.0 = identical after normalization, 0.0 = nothing in common</span></div>
+    </div>
+  </div>
+
+  <div class="step s-celery">
+    <div class="step-spine"><div class="step-num">E</div><div class="step-line"></div></div>
+    <div class="step-body">
+      <div class="step-header"><span class="actor-tag">Celery</span><span class="step-title">Upper-triangle loop — skip pairs with no suspect, flag pairs ≥ 0.80</span></div>
+      <p class="step-desc">For every (i, j) pair, skip if neither student is a HIGH-confidence suspect. This is what makes Phase 2 O(K×N) instead of O(N²). When similarity ≥ 0.80, a PlagiarismFlag is created. The key insight: a suspect may have copied from someone with clean behaviour signals — the source wouldn't appear in suspect-only comparison.</p>
+      <div class="code-block"><span class="kw">for</span> i <span class="kw">in</span> <span class="fn">range</span>(<span class="fn">len</span>(all_subs)):
+    <span class="kw">for</span> j <span class="kw">in</span> <span class="fn">range</span>(i + <span class="num">1</span>, <span class="fn">len</span>(all_subs)):
+        a_is_suspect = all_subs[i].student_id <span class="kw">in</span> high_risk_student_ids
+        b_is_suspect = all_subs[j].student_id <span class="kw">in</span> high_risk_student_ids
+
+        <span class="kw">if not</span> a_is_suspect <span class="kw">and not</span> b_is_suspect:
+            <span class="kw">continue</span>  <span class="cm"># skip — neither side flagged</span>
+
+        similarity = <span class="fn">float</span>(sim_matrix[i][j])
+
+        <span class="kw">if</span> similarity >= <span class="num">0.80</span>:
+            <span class="cls">PlagiarismFlag</span>.objects.<span class="fn">get_or_create</span>(
+                submission_1=all_subs[i],
+                submission_2=all_subs[j],
+                defaults={<span class="str">'similarity_score'</span>: similarity, <span class="str">'flagged'</span>: <span class="cls">True</span>}
+            )
+            <span class="fn">notify_plagiarism_flagged</span>(flag)   <span class="cm"># alert trainer</span></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- COST COMPARISON TABLE -->
+<div style="background:#1a1f2e;border:1px solid #2a3045;border-radius:12px;padding:24px;margin-bottom:32px;">
+  <div style="font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:16px;">Why this two-phase approach — cost comparison</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <thead>
+      <tr style="border-bottom:1px solid #2a3045;">
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Approach</th>
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Comparisons (200 students, 10 suspects)</th>
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Problem</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #1e2538;">
+        <td style="padding:10px 12px;color:#f87171;font-weight:600;">All-pairs TF-IDF</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">200×200 / 2 = 19,900</td>
+        <td style="padding:10px 12px;color:#64748b;">Way too slow for every exam close</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e2538;">
+        <td style="padding:10px 12px;color:#fbbf24;font-weight:600;">Suspects-only</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">10×10 / 2 = 45</td>
+        <td style="padding:10px 12px;color:#64748b;">Misses unflagged sources (the student who was copied from)</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 12px;color:#34d399;font-weight:600;">Phase 2 (K × N)</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">10×200 = 2,000</td>
+        <td style="padding:10px 12px;color:#34d399;">Catches unflagged sources. ~10× cheaper than all-pairs.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- DATA FLOW SUMMARY -->
+<div style="background:#1a1f2e;border:1px solid #2a3045;border-radius:12px;padding:24px;">
+  <div style="font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:16px;">What gets written to the DB at each stage</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <thead>
+      <tr style="border-bottom:1px solid #2a3045;">
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Stage</th>
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Table written</th>
+        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Condition</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #1e2538;">
+        <td style="padding:10px 12px;color:#e63946;font-weight:600;">Phase 1 completes</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">BehaviouralFlag</td>
+        <td style="padding:10px 12px;color:#64748b;">Only if risk_score &gt; 0.2</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e2538;">
+        <td style="padding:10px 12px;color:#e63946;font-weight:600;">Phase 1 completes</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">Submission.behavioural_check_done</td>
+        <td style="padding:10px 12px;color:#64748b;">Always — marks task as run</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e2538;">
+        <td style="padding:10px 12px;color:#f59e0b;font-weight:600;">Phase 2 — new pair found</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">PlagiarismFlag</td>
+        <td style="padding:10px 12px;color:#64748b;">Only if similarity ≥ 0.80 and at least one side is HIGH suspect</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e2538;">
+        <td style="padding:10px 12px;color:#f59e0b;font-weight:600;">Phase 2 completes</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">Submission.similarity_check_done</td>
+        <td style="padding:10px 12px;color:#64748b;">Always — marks batch as run for these submissions</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 12px;color:#8b5cf6;font-weight:600;">Trainer reviews flag</td>
+        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">ReviewAuditLog</td>
+        <td style="padding:10px 12px;color:#64748b;">Every confirm / dismiss action logged permanently</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div style="text-align:center;margin-top:40px;font-size:12px;color:#334155;">
+  CodeMas — Submission Execution Flow &nbsp;·&nbsp; Generated 2026
+</div>
+
+</body>
+</html>
