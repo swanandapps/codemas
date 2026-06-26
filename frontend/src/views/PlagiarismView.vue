@@ -257,6 +257,9 @@
                             <button class="view-code-btn" @click="toggleCode(flag)">
                                 {{ codeExpanded.has(flag.id) ? 'Hide Code' : 'View Code' }}
                             </button>
+                            <button class="view-code-btn ai-btn" @click="toggleExplanation(flag)">
+                                {{ explExpanded.has(flag.id) ? 'Hide AI Explanation' : 'AI Explanation' }}
+                            </button>
                         </div>
                     </div>
 
@@ -290,6 +293,25 @@
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- AI explanation panel (Feature 3) — evidence for the trainer, not a verdict -->
+                    <div v-if="explExpanded.has(flag.id)" class="ai-expl-panel">
+                        <div v-if="explLoading.has(flag.id)" class="code-loading">Loading explanation...</div>
+                        <div v-else-if="explData[flag.id]" class="ai-expl-body">
+                            <div class="ai-expl-head">
+                                <span class="ai-expl-title">AI Explanation</span>
+                                <span :class="['confidence-badge', explData[flag.id].confidence]">{{ explData[flag.id].confidence }}</span>
+                            </div>
+                            <p class="ai-expl-summary">{{ explData[flag.id].summary }}</p>
+                            <ul class="ai-expl-matches">
+                                <li v-for="(m, i) in explData[flag.id].matches" :key="i">{{ m }}</li>
+                            </ul>
+                            <p class="ai-expl-disclaimer">AI-generated evidence — the trainer makes the final call.</p>
+                        </div>
+                        <div v-else-if="explPending.has(flag.id)" class="ai-expl-empty">
+                            No AI explanation available for this pair yet.
                         </div>
                     </div>
 
@@ -401,6 +423,17 @@ interface CodeComparison {
 const codeExpanded = ref<Set<number>>(new Set())
 const codeLoading = ref<Set<number>>(new Set())
 const codeData = ref<Record<number, CodeComparison>>({})
+
+// AI plagiarism explanation (Feature 3) — lazy-loaded per flag on demand
+interface PlagiarismExplanation {
+    summary: string
+    matches: string[]
+    confidence: 'low' | 'medium' | 'high'
+}
+const explExpanded = ref<Set<number>>(new Set())
+const explLoading = ref<Set<number>>(new Set())
+const explData = ref<Record<number, PlagiarismExplanation>>({})
+const explPending = ref<Set<number>>(new Set())  // flags whose explanation isn't ready yet
 
 const searchQuery = ref('')
 const bExamFilter = ref<number | null>(null)
@@ -544,6 +577,39 @@ async function toggleCode(flag: PairFlag): Promise<void> {
     } finally {
         codeLoading.value.delete(id)
         codeLoading.value = new Set(codeLoading.value)
+    }
+}
+
+async function toggleExplanation(flag: PairFlag): Promise<void> {
+    const id = flag.id
+    if (explExpanded.value.has(id)) {
+        explExpanded.value.delete(id)
+        explExpanded.value = new Set(explExpanded.value)
+        return
+    }
+    explExpanded.value.add(id)
+    explExpanded.value = new Set(explExpanded.value)
+    if (explData.value[id]) return  // already loaded
+
+    explLoading.value.add(id)
+    explLoading.value = new Set(explLoading.value)
+    explPending.value.delete(id)
+    explPending.value = new Set(explPending.value)
+    try {
+        const res = await api.get(`/ai/plagiarism-explanation/${id}/`)
+        if (res.data && res.data.summary) {
+            explData.value[id] = res.data as PlagiarismExplanation
+        } else {
+            // {status: 'pending'} — explanation not generated yet (or unavailable)
+            explPending.value.add(id)
+            explPending.value = new Set(explPending.value)
+        }
+    } catch {
+        explPending.value.add(id)
+        explPending.value = new Set(explPending.value)
+    } finally {
+        explLoading.value.delete(id)
+        explLoading.value = new Set(explLoading.value)
     }
 }
 
@@ -837,6 +903,24 @@ function fmtDate(d: string): string {
     white-space: nowrap;
 }
 .view-code-btn:hover { border-color: var(--border2); color: var(--text); }
+.view-code-btn.ai-btn { border-color: var(--blue); color: var(--blue); }
+.view-code-btn.ai-btn:hover { background: rgba(52,152,219,0.1); }
+
+/* AI explanation panel (Feature 3) */
+.ai-expl-panel {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface2);
+    padding: 14px 16px;
+}
+.ai-expl-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.ai-expl-title { font-size: 12px; font-weight: 700; color: var(--text); }
+.ai-expl-summary { font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 8px; }
+.ai-expl-matches { margin: 0 0 8px; padding-left: 18px; }
+.ai-expl-matches li { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.ai-expl-disclaimer { font-size: 11px; color: var(--text-dim); font-style: italic; }
+.ai-expl-empty { font-size: 12px; color: var(--text-muted); }
 
 /* Code comparison panel */
 .code-panel {

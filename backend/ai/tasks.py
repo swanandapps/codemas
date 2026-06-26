@@ -153,3 +153,102 @@ def generate_hint(submission_id):
     from .llm import DEFAULT_MODEL
     AIHint.objects.create(submission=submission, hint=hint_text, model_used=DEFAULT_MODEL)
     logger.info('generate_hint: stored hint for submission %s', submission_id)
+
+
+PLAGIARISM_SYSTEM_PROMPT = (
+    "You are a plagiarism-review assistant for a coding exam. Two submissions "
+    "were flagged as similar by an automated engine. Explain, for a human "
+    "trainer, WHY this pair looks suspicious. Be concrete and cite specific "
+    "evidence from the code and the behavioural signals provided. This is "
+    "EVIDENCE, not a verdict — the trainer decides.\n"
+    "Respond ONLY with a JSON object of this exact shape:\n"
+    "{\n"
+    '  "summary": "<one sentence on why this pair is suspicious>",\n'
+    '  "matches": ["<concrete observation>", "<concrete observation>"],\n'
+    '  "confidence": "low" | "medium" | "high"\n'
+    "}\n"
+    "Provide 2-3 items in matches. Base confidence on how strongly the code "
+    "similarity AND behavioural signals combine."
+)
+
+
+def _behaviour_summary(submission):
+    """Compact, human-readable behavioural signals for one submission."""
+    parts = [
+        f"paste: {'yes' if submission.had_paste_event else 'no'} "
+        f"({submission.paste_char_count} chars)",
+        f"time to complete: {submission.time_to_complete_seconds}s",
+        f"tab switches: {submission.tab_switch_count}",
+    ]
+    flag = getattr(submission, 'behavioural_flag', None)
+    if flag is not None:
+        parts.append(f"behavioural risk: {flag.risk_score:.2f} ({flag.confidence})")
+        if flag.signals_triggered:
+            parts.append("signals: " + "; ".join(flag.signals_triggered))
+    return " | ".join(parts)
+
+
+@shared_task
+def explain_plagiarism(flag_id):
+    """Generate and store a natural-language explanation for one flagged pair."""
+    PlagiarismFlag = apps.get_model('plagiarism', 'PlagiarismFlag')
+    PlagiarismExplanation = apps.get_model('ai', 'PlagiarismExplanation')
+
+    flag = (
+        PlagiarismFlag.objects
+        .filter(pk=flag_id)
+        .select_related(
+            'submission_1', 'submission_1__question', 'submission_1__behavioural_flag',
+            'submission_2', 'submission_2__question', 'submission_2__behavioural_flag',
+        )
+        .first()
+    )
+    if not flag:
+        logger.warning('explain_plagiarism: flag %s not found', flag_id)
+        return
+
+    # Idempotent — never re-explain the same pair.
+    if PlagiarismExplanation.objects.filter(flag_id=flag_id).exists():
+        return
+
+    a = flag.submission_1
+    b = flag.submission_2
+    question = a.question
+
+    user_prompt = (
+        f"QUESTION:\n{question.title}\n{question.description}\n\n"
+        f"SIMILARITY SCORE: {flag.similarity_score:.2f} (threshold-flagged)\n\n"
+        f"SUBMISSION A — {a.student.username} ({a.language})\n"
+        f"behavioural signals: {_behaviour_summary(a)}\n"
+        f"code:\n{a.code}\n\n"
+        f"SUBMISSION B — {b.student.username} ({b.language})\n"
+        f"behavioural signals: {_behaviour_summary(b)}\n"
+        f"code:\n{b.code}"
+    )
+
+    try:
+        data = call_json(PLAGIARISM_SYSTEM_PROMPT, user_prompt)
+    except LLMUnavailable as e:
+        logger.info('explain_plagiarism: skipped flag %s (%s)', flag_id, e)
+        return
+
+    if not isinstance(data, dict) or not data.get('summary'):
+        logger.warning('explain_plagiarism: bad LLM payload for flag %s', flag_id)
+        return
+
+    confidence = str(data.get('confidence', 'low')).lower()
+    if confidence not in ('low', 'medium', 'high'):
+        confidence = 'low'
+    matches = data.get('matches') or []
+    if not isinstance(matches, list):
+        matches = [str(matches)]
+
+    from .llm import DEFAULT_MODEL
+    PlagiarismExplanation.objects.create(
+        flag=flag,
+        summary=data['summary'],
+        matches=matches,
+        confidence=confidence,
+        model_used=DEFAULT_MODEL,
+    )
+    logger.info('explain_plagiarism: stored explanation for flag %s', flag_id)

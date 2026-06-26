@@ -1,5 +1,5 @@
 from rest_framework import serializers  # DRF serializer base classes
-from .models import RubricScore, AIHint
+from .models import RubricScore, AIHint, PlagiarismExplanation
 
 
 class RubricScoreSerializer(serializers.ModelSerializer):
@@ -22,3 +22,9 @@ class AIHintSerializer(serializers.ModelSerializer):
     class Meta:
         model = AIHint
         fields = ['submission', 'hint', 'model_used', 'created_at']
+
+
+class PlagiarismExplanationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlagiarismExplanation
+        fields = ['flag', 'summary', 'matches', 'confidence', 'model_used', 'created_at']

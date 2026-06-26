@@ -631,6 +631,14 @@ def run_question_plagiarism_check(question_id: int, run_id: int = None):
                     pf = PlagiarismFlag.objects.get(submission_1=sub_a, submission_2=sub_b)
                     notify_plagiarism_flagged(pf)
 
+                    # AI explanation (async, best-effort) — generated alongside this
+                    # Layer 2 pass for the newly flagged pair. Never blocks detection.
+                    try:
+                        from ai.tasks import explain_plagiarism
+                        explain_plagiarism.delay(pf.id)
+                    except Exception as e:
+                        print(f'[AI] failed to enqueue plagiarism explanation: {e}')
+
                 if similarity >= 0.90:
                     pairs_90 += 1
                 else:

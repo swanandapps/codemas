@@ -4,8 +4,11 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 
 from submissions.models import Submission
-from .models import RubricScore, AIHint
-from .serializers import RubricScoreSerializer, AIHintSerializer
+from plagiarism.models import PlagiarismFlag
+from .models import RubricScore, AIHint, PlagiarismExplanation
+from .serializers import (
+    RubricScoreSerializer, AIHintSerializer, PlagiarismExplanationSerializer,
+)
 
 
 class RubricScoreView(APIView):
@@ -55,3 +58,26 @@ class AIHintView(APIView):
             return Response({'status': 'pending'})
 
         return Response(AIHintSerializer(hint).data)
+
+
+class PlagiarismExplanationView(APIView):
+    """GET /api/ai/plagiarism-explanation/<flag_id>/
+
+    Trainer-only. Returns the GPT explanation for a flagged pair, or
+    {"status": "pending"} while the async task is still running.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, flag_id):
+        if request.user.role != 'trainer':
+            return Response({'error': 'Not allowed'}, status=status.HTTP_403_FORBIDDEN)
+
+        flag = PlagiarismFlag.objects.filter(pk=flag_id).first()
+        if not flag:
+            return Response({'error': 'Flag not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        explanation = PlagiarismExplanation.objects.filter(flag=flag).first()
+        if not explanation:
+            return Response({'status': 'pending'})
+
+        return Response(PlagiarismExplanationSerializer(explanation).data)

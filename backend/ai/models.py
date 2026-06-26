@@ -57,3 +57,27 @@ class AIHint(models.Model):
 
     def __str__(self):
         return f"AIHint(sub={self.submission_id})"
+
+
+class PlagiarismExplanation(models.Model):
+    """GPT-generated natural-language explanation of why a pair was flagged.
+
+    Generated async at exam close, alongside the existing Layer 2 TF-IDF pass,
+    only for pairs flagged above the similarity threshold. It is evidence for the
+    trainer's audit trail — the trainer still makes the final call.
+    """
+    CONFIDENCE_CHOICES = [('low', 'Low'), ('medium', 'Medium'), ('high', 'High')]
+
+    flag = models.OneToOneField(
+        'plagiarism.PlagiarismFlag',
+        on_delete=models.CASCADE,
+        related_name='ai_explanation',  # flag.ai_explanation
+    )
+    summary = models.TextField()                                  # one sentence: why suspicious
+    matches = models.JSONField(default=list)                      # 2-3 concrete observations
+    confidence = models.CharField(max_length=10, choices=CONFIDENCE_CHOICES)
+    model_used = models.CharField(max_length=60, blank=True)      # which GPT model produced this
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"PlagiarismExplanation(flag={self.flag_id}, conf={self.confidence})"
