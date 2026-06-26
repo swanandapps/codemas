@@ -67,6 +67,7 @@
                     <span class="col-time">{{ fmtDate(s.submitted_at) }}</span>
                     <span class="col-code">
                         <button class="code-btn" @click="openCode(s.id)">View</button>
+                        <button class="code-btn details-btn" @click="$router.push(`/dashboard/submissions/${s.id}`)">Details</button>
                     </span>
                 </div>
             </div>
@@ -220,7 +221,7 @@ async function openCode(id: number) {
 }
 .table-header, .table-row {
     display: grid;
-    grid-template-columns: 130px 1fr 120px 90px 90px 130px 60px;
+    grid-template-columns: 130px 1fr 120px 90px 90px 130px 140px;
     gap: 12px;
     padding: 11px 18px;
     align-items: center;
@@ -274,6 +275,9 @@ async function openCode(id: number) {
     cursor: pointer;
 }
 .code-btn:hover { color: var(--text); }
+.col-code { display: flex; gap: 6px; }
+.details-btn { border-color: var(--red); color: var(--red); }
+.details-btn:hover { background: var(--red-dim); color: var(--red); }
 
 .pagination-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .page-btn {

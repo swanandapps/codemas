@@ -61,8 +61,8 @@
                 </div>
                 <div class="kpi">
                     <div class="kpi-label">Similarity Check</div>
-                    <div class="kpi-val" :class="sub.similarity_check_done ? 'text-green' : 'text-yellow'">
-                        {{ sub.similarity_check_done ? 'Done' : 'Pending' }}
+                    <div class="kpi-val" :class="similarityCheck.cls" :title="similarityCheck.hint">
+                        {{ similarityCheck.text }}
                     </div>
                 </div>
             </div>
@@ -106,6 +106,48 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- AI evaluation (rubric + hint) — read-only trainer view -->
+                    <div class="card ai-card">
+                        <div class="ai-card-head">
+                            <span class="ai-icon">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5l-1.9-4.6L5.5 9l4.6-1.4L12 3z"/><path d="M19 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z"/></svg>
+                            </span>
+                            <span class="ai-card-title">AI Evaluation</span>
+                            <span class="ai-gpt-chip">GPT</span>
+                        </div>
+                        <div v-if="aiLoading" class="mini-state">Loading...</div>
+                        <template v-else>
+                            <!-- Rubric -->
+                            <div v-if="rubric">
+                                <div class="ai-total-row">
+                                    <span class="ai-total-label">Rubric Score</span>
+                                    <span class="ai-total-badge" :class="scoreClass(rubric.total_score, 8)">
+                                        {{ rubric.total_score }}<span class="ai-total-max">/8</span>
+                                    </span>
+                                </div>
+                                <div v-for="dim in rubricDimensions" :key="dim.label" class="ai-dim">
+                                    <div class="ai-dim-top">
+                                        <span class="ai-dim-label">{{ dim.label }}</span>
+                                        <span class="ai-dim-score" :class="scoreClass(dim.score, 2)">{{ dim.score }}/2</span>
+                                    </div>
+                                    <div class="ai-bar"><div class="ai-bar-fill" :class="scoreClass(dim.score, 2)" :style="{ width: (dim.score / 2 * 100) + '%' }" /></div>
+                                    <p class="ai-dim-note">{{ dim.note }}</p>
+                                </div>
+                                <p class="ai-overall">{{ rubric.overall_feedback }}</p>
+                            </div>
+                            <div v-else class="mini-state">No rubric score available</div>
+
+                            <!-- Hint (only present on failed submissions) -->
+                            <template v-if="hint">
+                                <div class="ai-hint-head">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg>
+                                    Socratic Hint Shown to Student
+                                </div>
+                                <p class="ai-hint">{{ hint }}</p>
+                            </template>
+                        </template>
                     </div>
 
                     <!-- Plagiarism flags -->
@@ -200,7 +242,50 @@ const sub      = ref<any>(null)
 const results  = ref<any[]>([])
 const plagData = ref<any>({ behavioural: null, similarity: [] })
 
+// AI evaluation (rubric + hint) — populated async, may be absent for older submissions
+const aiLoading = ref(true)
+const rubric    = ref<any>(null)
+const hint      = ref<string | null>(null)
+
 const passedCount = computed(() => results.value.filter(r => r.passed).length)
+
+// Similarity check has three real states, not two. similarity_check_done=false
+// can mean "exam run hasn't happened" OR "run happened but this submission wasn't
+// a behavioural suspect, so it was never cross-compared" (by design). We use
+// behavioural_check_done as the proxy for "the exam's plagiarism run executed".
+const similarityCheck = computed(() => {
+    const s = sub.value
+    if (!s) return { text: '—', cls: 'text-dim', hint: '' }
+    if (s.similarity_check_done) {
+        return { text: 'Done', cls: 'text-green', hint: 'This submission was cross-compared via TF-IDF similarity.' }
+    }
+    if (s.behavioural_check_done) {
+        return {
+            text: 'Out of scope', cls: 'text-dim',
+            hint: 'The exam\'s plagiarism run completed, but this submission was not a high-risk behavioural suspect, so it was not cross-compared (by design).',
+        }
+    }
+    return { text: 'Pending', cls: 'text-yellow', hint: 'The exam\'s plagiarism run has not run yet for this submission.' }
+})
+
+// Map a score to a quality band so bars/badges colour by performance
+function scoreClass(score: number, max: number): string {
+    const pct = score / max
+    if (pct >= 0.75) return 'good'
+    if (pct >= 0.4) return 'mid'
+    return 'low'
+}
+
+const rubricDimensions = computed(() => {
+    const r = rubric.value
+    if (!r) return []
+    return [
+        { label: 'Correctness', score: r.correctness_score, note: r.correctness_note },
+        { label: 'Code Quality', score: r.code_quality_score, note: r.code_quality_note },
+        { label: 'Approach', score: r.approach_score, note: r.approach_note },
+        { label: 'Edge Cases', score: r.edge_case_score, note: r.edge_case_note },
+    ]
+})
 
 onMounted(async () => {
     const id = route.params.id
@@ -215,6 +300,19 @@ onMounted(async () => {
     loading.value        = false
     resultsLoading.value = false
     plagLoading.value    = false
+
+    // AI evaluation — fetched separately and non-blocking; gracefully absent for
+    // submissions that predate the feature or that scoring hasn't reached yet.
+    try {
+        const [rubricRes, hintRes] = await Promise.all([
+            api.get(`/ai/rubric/${id}/`).catch(() => null),
+            api.get(`/ai/hint/${id}/`).catch(() => null),
+        ])
+        if (rubricRes && typeof rubricRes.data?.total_score === 'number') rubric.value = rubricRes.data
+        if (hintRes && typeof hintRes.data?.hint === 'string') hint.value = hintRes.data.hint
+    } finally {
+        aiLoading.value = false
+    }
 })
 
 function formatDate(iso: string) {
@@ -274,6 +372,7 @@ function formatDate(iso: string) {
 .text-red    { color: var(--red) !important; }
 .text-yellow { color: var(--yellow) !important; }
 .text-green  { color: var(--green) !important; }
+.kpi-val.text-dim { color: var(--text-dim) !important; font-size: 14px; }
 
 /* Main grid */
 .main-grid { display: grid; grid-template-columns: 1fr 420px; gap: 14px; align-items: start; }
@@ -358,4 +457,72 @@ function formatDate(iso: string) {
     padding: 3px 9px; cursor: pointer; transition: opacity 0.15s;
 }
 .view-btn:hover { opacity: 0.75; }
+
+/* AI evaluation — prominent, accented card */
+.ai-card {
+    position: relative;
+    border: 1px solid var(--blue);
+    background:
+        linear-gradient(180deg, var(--blue-dim) 0%, rgba(0,0,0,0) 90px),
+        var(--surface);
+    box-shadow: 0 0 0 1px var(--blue-dim), var(--shadow);
+    overflow: hidden;
+}
+.ai-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, var(--blue), var(--green));
+}
+.ai-card-head { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
+.ai-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 7px;
+    background: var(--blue); color: #fff; flex-shrink: 0;
+}
+.ai-card-title { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: 0.2px; }
+.ai-gpt-chip {
+    margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+    padding: 2px 8px; border-radius: 10px;
+    background: var(--blue-dim); color: var(--blue); border: 1px solid var(--blue);
+}
+
+.ai-total-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px; margin-bottom: 14px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.ai-total-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+.ai-total-badge {
+    font-size: 20px; font-weight: 800; padding: 3px 12px; border-radius: var(--radius-sm);
+    font-variant-numeric: tabular-nums; line-height: 1;
+}
+.ai-total-max { font-size: 12px; font-weight: 700; opacity: 0.6; }
+.ai-total-badge.good { background: var(--green-dim); color: var(--green); }
+.ai-total-badge.mid  { background: var(--yellow-dim); color: var(--yellow); }
+.ai-total-badge.low  { background: var(--red-dim); color: var(--red); }
+
+.ai-dim { margin-bottom: 12px; }
+.ai-dim-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+.ai-dim-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.ai-dim-score { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ai-dim-score.good { color: var(--green); }
+.ai-dim-score.mid  { color: var(--yellow); }
+.ai-dim-score.low  { color: var(--red); }
+.ai-bar { height: 6px; background: var(--surface3); border-radius: 3px; overflow: hidden; }
+.ai-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.ai-bar-fill.good { background: var(--green); }
+.ai-bar-fill.mid  { background: var(--yellow); }
+.ai-bar-fill.low  { background: var(--red); }
+.ai-dim-note { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 5px 0 0; }
+.ai-overall {
+    font-size: 12px; color: var(--text); line-height: 1.6;
+    background: var(--surface2); border-left: 3px solid var(--blue);
+    border-radius: var(--radius-sm); padding: 10px 12px; margin-top: 14px;
+}
+.ai-hint-head {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11px; font-weight: 700; color: var(--yellow);
+    margin: 16px 0 8px; padding-top: 14px; border-top: 1px solid var(--border);
+}
+.ai-hint { font-size: 12px; color: var(--text-muted); line-height: 1.6; background: var(--yellow-dim); border: 1px solid var(--yellow); border-radius: var(--radius-sm); padding: 10px 12px; margin: 0; }
 </style>
