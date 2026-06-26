@@ -68,6 +68,34 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- AI rubric feedback (Feature 1) — arrives a few seconds after the result -->
+                <div v-if="rubric" class="rubric-card">
+                    <button class="rubric-header" @click="rubricExpanded = !rubricExpanded">
+                        <span class="rubric-title">AI Feedback</span>
+                        <span class="rubric-total">{{ rubric.total_score }}/8</span>
+                        <span class="rubric-chevron">{{ rubricExpanded ? '▾' : '▸' }}</span>
+                    </button>
+
+                    <div v-if="rubricExpanded" class="rubric-body">
+                        <div
+                            v-for="dim in rubricDimensions"
+                            :key="dim.label"
+                            class="rubric-dim"
+                        >
+                            <div class="rubric-dim-top">
+                                <span class="rubric-dim-label">{{ dim.label }}</span>
+                                <span class="rubric-dim-score">{{ dim.score }}/2</span>
+                            </div>
+                            <div class="rubric-bar">
+                                <div class="rubric-bar-fill" :style="{ width: (dim.score / 2 * 100) + '%' }"></div>
+                            </div>
+                            <p class="rubric-dim-note">{{ dim.note }}</p>
+                        </div>
+
+                        <p class="rubric-overall">{{ rubric.overall_feedback }}</p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -99,6 +127,19 @@ interface TestResult {
     error_message: string
 }
 
+interface RubricScore {
+    correctness_score: number
+    correctness_note: string
+    code_quality_score: number
+    code_quality_note: string
+    approach_score: number
+    approach_note: string
+    edge_case_score: number
+    edge_case_note: string
+    overall_feedback: string
+    total_score: number
+}
+
 const route = useRoute()
 const router = useRouter()
 
@@ -112,6 +153,11 @@ const submitting = ref<boolean>(false)
 const submissionStatus = ref<string>('')
 const results = ref<TestResult[]>([])
 const attemptsUsed = ref<Record<number, number>>({})
+
+// AI rubric (Feature 1) — fetched async after the result is shown
+const rubric = ref<RubricScore | null>(null)
+const rubricExpanded = ref<boolean>(false)
+let rubricPollTimer: ReturnType<typeof setTimeout> | null = null
 
 // behaviour tracking
 const hadPasteEvent = ref<boolean>(false)
@@ -129,6 +175,18 @@ const canSubmit = computed<boolean>(() => {
     if (!currentQuestion.value) return false
     const used = attemptsUsed.value[currentQuestion.value.id] || 0
     return used < currentQuestion.value.max_attempts && code.value.trim().length > 0
+})
+
+// Flatten the rubric into rows for the score-bar UI
+const rubricDimensions = computed(() => {
+    const r = rubric.value
+    if (!r) return []
+    return [
+        { label: 'Correctness', score: r.correctness_score, note: r.correctness_note },
+        { label: 'Code Quality', score: r.code_quality_score, note: r.code_quality_note },
+        { label: 'Approach', score: r.approach_score, note: r.approach_note },
+        { label: 'Edge Cases', score: r.edge_case_score, note: r.edge_case_note },
+    ]
 })
 
 const editorExtensions = computed(() => {
@@ -155,6 +213,7 @@ onMounted(async () => {
 onUnmounted(() => {
     if (timerInterval) clearInterval(timerInterval)
     if (eventSource) eventSource.close()
+    if (rubricPollTimer) clearTimeout(rubricPollTimer)
 })
 
 function startTimer(): void {
@@ -190,11 +249,21 @@ function attachTabSwitchListener(): void {
     })
 }
 
+function resetRubric(): void {
+    rubric.value = null
+    rubricExpanded.value = false
+    if (rubricPollTimer) {
+        clearTimeout(rubricPollTimer)
+        rubricPollTimer = null
+    }
+}
+
 function switchQuestion(index: number): void {
     currentIndex.value = index
     submissionStatus.value = ''
     results.value = []
     code.value = ''
+    resetRubric()
     if (eventSource) {
         eventSource.close()
         eventSource = null
@@ -206,6 +275,7 @@ async function submitCode(): Promise<void> {
     submitting.value = true
     submissionStatus.value = 'running'
     results.value = []
+    resetRubric()
 
     try {
         const res = await api.post('/submissions/create/', {
@@ -250,6 +320,7 @@ function listenForResult(submissionId: number): void {
             eventSource?.close()
             const res = await api.get(`/results/${submissionId}/`)
             results.value = res.data
+            pollRubric(submissionId)  // AI rubric arrives a few seconds later
         }
     }
 
@@ -257,6 +328,28 @@ function listenForResult(submissionId: number): void {
         eventSource?.close()
         submissionStatus.value = 'failed'
     }
+}
+
+// Poll the rubric endpoint until the async GPT score is stored, then stop.
+// Bounded so we give up quietly if scoring is unavailable (e.g. no API key).
+function pollRubric(submissionId: number, attempt = 0): void {
+    const MAX_ATTEMPTS = 15
+    const INTERVAL_MS = 2000
+
+    if (attempt >= MAX_ATTEMPTS) return
+
+    rubricPollTimer = setTimeout(async () => {
+        try {
+            const res = await api.get(`/ai/rubric/${submissionId}/`)
+            if (res.data && typeof res.data.total_score === 'number') {
+                rubric.value = res.data as RubricScore
+                return  // got it — stop polling
+            }
+        } catch {
+            // transient error — fall through and retry
+        }
+        pollRubric(submissionId, attempt + 1)
+    }, INTERVAL_MS)
 }
 </script>
 
@@ -391,4 +484,53 @@ function listenForResult(submissionId: number): void {
 .result-row.pass span:first-child { color: var(--green); }
 .result-row.fail span:first-child { color: var(--red); }
 .err { color: var(--red); font-style: italic; }
+
+/* AI rubric card (Feature 1) */
+.rubric-card {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
+}
+.rubric-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border: none;
+    cursor: pointer;
+    color: var(--text);
+}
+.rubric-title { font-size: 13px; font-weight: 600; }
+.rubric-total {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 2px 10px;
+    border-radius: var(--radius-sm);
+    font-variant-numeric: tabular-nums;
+}
+.rubric-chevron { font-size: 12px; color: var(--text-dim); }
+.rubric-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+.rubric-dim { display: flex; flex-direction: column; gap: 5px; }
+.rubric-dim-top { display: flex; justify-content: space-between; align-items: center; }
+.rubric-dim-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.rubric-dim-score { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.rubric-bar { height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+.rubric-bar-fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 0.3s; }
+.rubric-dim-note { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.rubric-overall {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    font-style: italic;
+}
 </style>

@@ -72,6 +72,16 @@ def execute_submission(submission_id):
     r.publish(channel, payload)
     print(f"[REDIS] published to channel={channel} payload={payload}")
 
+    # ── AI features (async, best-effort) ──────────────────────────────────────
+    # These fire AFTER the result is delivered above. They run as separate Celery
+    # tasks so they never sit on the sub-10s delivery path, and any failure here
+    # must not affect the result the student already received.
+    try:
+        from ai.tasks import score_rubric
+        score_rubric.delay(submission_id)  # rubric scoring on every submission
+    except Exception as e:
+        print(f"[AI] failed to enqueue rubric scoring: {e}")
+
 
 def run_in_lambda(code, language, input_data):
     # Maps language to the deployed Lambda function name

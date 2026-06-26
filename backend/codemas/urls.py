@@ -27,4 +27,5 @@ urlpatterns = [
     path('api/dashboard/', include('dashboard.urls')),
     path('api/leaderboard/', include('leaderboard.urls')),
     path('api/support/', include('support.urls')),
+    path('api/ai/', include('ai.urls')),  # async GPT features: rubric scoring, hints, plagiarism explanation
 ]

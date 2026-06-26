@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "leaderboard",
     "support",
+    "ai",
 ]
 
 CORS_ALLOWED_ORIGINS = [
