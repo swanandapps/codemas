@@ -67,6 +67,14 @@
                             <span v-if="r.error_message" class="err">{{ r.error_message }}</span>
                         </div>
                     </div>
+
+                    <!-- AI Socratic hint (Feature 2) — only on failed submissions, shown on demand -->
+                    <div v-if="submissionStatus === 'failed' && hint" class="hint-area">
+                        <button class="hint-btn" @click="hintVisible = !hintVisible">
+                            {{ hintVisible ? 'Hide Hint' : 'Show Hint' }}
+                        </button>
+                        <p v-if="hintVisible" class="hint-text">{{ hint }}</p>
+                    </div>
                 </div>
 
                 <!-- AI rubric feedback (Feature 1) — arrives a few seconds after the result -->
@@ -159,6 +167,11 @@ const rubric = ref<RubricScore | null>(null)
 const rubricExpanded = ref<boolean>(false)
 let rubricPollTimer: ReturnType<typeof setTimeout> | null = null
 
+// AI hint (Feature 2) — fetched async after a FAILED result, shown on demand
+const hint = ref<string | null>(null)
+const hintVisible = ref<boolean>(false)
+let hintPollTimer: ReturnType<typeof setTimeout> | null = null
+
 // behaviour tracking
 const hadPasteEvent = ref<boolean>(false)
 const pasteCharCount = ref<number>(0)
@@ -214,6 +227,7 @@ onUnmounted(() => {
     if (timerInterval) clearInterval(timerInterval)
     if (eventSource) eventSource.close()
     if (rubricPollTimer) clearTimeout(rubricPollTimer)
+    if (hintPollTimer) clearTimeout(hintPollTimer)
 })
 
 function startTimer(): void {
@@ -255,6 +269,12 @@ function resetRubric(): void {
     if (rubricPollTimer) {
         clearTimeout(rubricPollTimer)
         rubricPollTimer = null
+    }
+    hint.value = null
+    hintVisible.value = false
+    if (hintPollTimer) {
+        clearTimeout(hintPollTimer)
+        hintPollTimer = null
     }
 }
 
@@ -321,6 +341,9 @@ function listenForResult(submissionId: number): void {
             const res = await api.get(`/results/${submissionId}/`)
             results.value = res.data
             pollRubric(submissionId)  // AI rubric arrives a few seconds later
+            if (data.status === 'failed') {
+                pollHint(submissionId)  // Socratic hint only on failed submissions
+            }
         }
     }
 
@@ -349,6 +372,27 @@ function pollRubric(submissionId: number, attempt = 0): void {
             // transient error — fall through and retry
         }
         pollRubric(submissionId, attempt + 1)
+    }, INTERVAL_MS)
+}
+
+// Poll the hint endpoint until the async hint is stored, then stop.
+function pollHint(submissionId: number, attempt = 0): void {
+    const MAX_ATTEMPTS = 15
+    const INTERVAL_MS = 2000
+
+    if (attempt >= MAX_ATTEMPTS) return
+
+    hintPollTimer = setTimeout(async () => {
+        try {
+            const res = await api.get(`/ai/hint/${submissionId}/`)
+            if (res.data && typeof res.data.hint === 'string') {
+                hint.value = res.data.hint
+                return  // got it — stop polling
+            }
+        } catch {
+            // transient error — fall through and retry
+        }
+        pollHint(submissionId, attempt + 1)
     }, INTERVAL_MS)
 }
 </script>
@@ -484,6 +528,31 @@ function pollRubric(submissionId: number, attempt = 0): void {
 .result-row.pass span:first-child { color: var(--green); }
 .result-row.fail span:first-child { color: var(--red); }
 .err { color: var(--red); font-style: italic; }
+
+/* AI hint (Feature 2) */
+.hint-area { margin-top: 12px; }
+.hint-btn {
+    padding: 6px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.hint-btn:hover { border-color: var(--border2); }
+.hint-text {
+    margin-top: 10px;
+    padding: 12px 14px;
+    background: var(--yellow-dim);
+    border: 1px solid var(--yellow);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+}
 
 /* AI rubric card (Feature 1) */
 .rubric-card {

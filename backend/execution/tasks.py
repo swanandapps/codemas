@@ -82,6 +82,13 @@ def execute_submission(submission_id):
     except Exception as e:
         print(f"[AI] failed to enqueue rubric scoring: {e}")
 
+    if submission.status == 'failed':
+        try:
+            from ai.tasks import generate_hint
+            generate_hint.delay(submission_id)  # Socratic hint only on failed submissions
+        except Exception as e:
+            print(f"[AI] failed to enqueue hint generation: {e}")
+
 
 def run_in_lambda(code, language, input_data):
     # Maps language to the deployed Lambda function name

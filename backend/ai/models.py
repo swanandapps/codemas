@@ -37,3 +37,23 @@ class RubricScore(models.Model):
 
     def __str__(self):
         return f"RubricScore(sub={self.submission_id}, total={self.total_score}/8)"
+
+
+class AIHint(models.Model):
+    """GPT-generated Socratic hint for a FAILED submission.
+
+    Generated async after the failed result is delivered. One row per submission;
+    stored so it does not regenerate on page refresh. Shown only on demand
+    (student clicks "Show Hint").
+    """
+    submission = models.OneToOneField(
+        'submissions.Submission',
+        on_delete=models.CASCADE,
+        related_name='ai_hint',  # submission.ai_hint
+    )
+    hint = models.TextField()                                  # 1-3 sentence Socratic nudge
+    model_used = models.CharField(max_length=60, blank=True)   # which GPT model produced this
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"AIHint(sub={self.submission_id})"
