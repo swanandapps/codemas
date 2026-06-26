@@ -80,8 +80,12 @@
                 <!-- AI rubric feedback (Feature 1) — arrives a few seconds after the result -->
                 <div v-if="rubric" class="rubric-card">
                     <button class="rubric-header" @click="rubricExpanded = !rubricExpanded">
+                        <span class="rubric-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5l-1.9-4.6L5.5 9l4.6-1.4L12 3z"/><path d="M19 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z"/></svg>
+                        </span>
                         <span class="rubric-title">AI Feedback</span>
-                        <span class="rubric-total">{{ rubric.total_score }}/8</span>
+                        <span class="rubric-gpt-chip">GPT</span>
+                        <span class="rubric-total" :class="scoreClass(rubric.total_score, 8)">{{ rubric.total_score }}<span class="rubric-total-max">/8</span></span>
                         <span class="rubric-chevron">{{ rubricExpanded ? '▾' : '▸' }}</span>
                     </button>
 
@@ -93,10 +97,10 @@
                         >
                             <div class="rubric-dim-top">
                                 <span class="rubric-dim-label">{{ dim.label }}</span>
-                                <span class="rubric-dim-score">{{ dim.score }}/2</span>
+                                <span class="rubric-dim-score" :class="scoreClass(dim.score, 2)">{{ dim.score }}/2</span>
                             </div>
                             <div class="rubric-bar">
-                                <div class="rubric-bar-fill" :style="{ width: (dim.score / 2 * 100) + '%' }"></div>
+                                <div class="rubric-bar-fill" :class="scoreClass(dim.score, 2)" :style="{ width: (dim.score / 2 * 100) + '%' }"></div>
                             </div>
                             <p class="rubric-dim-note">{{ dim.note }}</p>
                         </div>
@@ -189,6 +193,14 @@ const canSubmit = computed<boolean>(() => {
     const used = attemptsUsed.value[currentQuestion.value.id] || 0
     return used < currentQuestion.value.max_attempts && code.value.trim().length > 0
 })
+
+// Map a score to a quality band so bars/badges colour by performance
+function scoreClass(score: number, max: number): string {
+    const pct = score / max
+    if (pct >= 0.75) return 'good'
+    if (pct >= 0.4) return 'mid'
+    return 'low'
+}
 
 // Flatten the rubric into rows for the score-bar UI
 const rubricDimensions = computed(() => {
@@ -554,52 +566,79 @@ function pollHint(submissionId: number, attempt = 0): void {
     color: var(--text-muted);
 }
 
-/* AI rubric card (Feature 1) */
+/* AI rubric card (Feature 1) — prominent, accented */
 .rubric-card {
+    position: relative;
     margin-top: 12px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--blue);
     border-radius: var(--radius);
     background: var(--surface);
+    box-shadow: 0 0 0 1px var(--blue-dim), var(--shadow);
     overflow: hidden;
+}
+.rubric-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, var(--blue), var(--green));
+    z-index: 1;
 }
 .rubric-header {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
     padding: 12px 16px;
-    background: var(--surface2);
+    background: linear-gradient(180deg, var(--blue-dim), var(--surface2));
     border: none;
     cursor: pointer;
     color: var(--text);
 }
-.rubric-title { font-size: 13px; font-weight: 600; }
+.rubric-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 7px;
+    background: var(--blue); color: #fff; flex-shrink: 0;
+}
+.rubric-title { font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
+.rubric-gpt-chip {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+    padding: 2px 7px; border-radius: 10px;
+    background: var(--blue-dim); color: var(--blue); border: 1px solid var(--blue);
+}
 .rubric-total {
     margin-left: auto;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--border);
+    font-size: 15px;
+    font-weight: 800;
     padding: 2px 10px;
     border-radius: var(--radius-sm);
     font-variant-numeric: tabular-nums;
+    line-height: 1.2;
 }
+.rubric-total-max { font-size: 10px; font-weight: 700; opacity: 0.6; }
+.rubric-total.good { background: var(--green-dim); color: var(--green); }
+.rubric-total.mid  { background: var(--yellow-dim); color: var(--yellow); }
+.rubric-total.low  { background: var(--red-dim); color: var(--red); }
 .rubric-chevron { font-size: 12px; color: var(--text-dim); }
 .rubric-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
 .rubric-dim { display: flex; flex-direction: column; gap: 5px; }
 .rubric-dim-top { display: flex; justify-content: space-between; align-items: center; }
 .rubric-dim-label { font-size: 12px; font-weight: 600; color: var(--text); }
-.rubric-dim-score { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.rubric-bar { height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
-.rubric-bar-fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 0.3s; }
+.rubric-dim-score { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rubric-dim-score.good { color: var(--green); }
+.rubric-dim-score.mid  { color: var(--yellow); }
+.rubric-dim-score.low  { color: var(--red); }
+.rubric-bar { height: 6px; background: var(--surface3); border-radius: 3px; overflow: hidden; }
+.rubric-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.rubric-bar-fill.good { background: var(--green); }
+.rubric-bar-fill.mid  { background: var(--yellow); }
+.rubric-bar-fill.low  { background: var(--red); }
 .rubric-dim-note { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
 .rubric-overall {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text);
     line-height: 1.6;
-    border-top: 1px solid var(--border);
-    padding-top: 12px;
-    font-style: italic;
+    background: var(--surface2);
+    border-left: 3px solid var(--blue);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
 }
 </style>
