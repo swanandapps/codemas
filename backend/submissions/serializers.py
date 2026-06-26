@@ -3,6 +3,7 @@ from .models import Submission
 
 class SubmissionSerializer(serializers.ModelSerializer):
     student_username = serializers.CharField(source='student.username', read_only=True)
+    student_id = serializers.IntegerField(source='student.id', read_only=True)
     question_title = serializers.CharField(source='question.title', read_only=True)
     question_description = serializers.CharField(source='question.description', read_only=True)
     exam_title = serializers.CharField(source='exam.title', read_only=True)
@@ -11,7 +12,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Submission
         fields = [
-            'id', 'student_username', 'exam', 'exam_title', 'question', 'question_title', 'question_description',
+            'id', 'student_username', 'student_id', 'exam', 'exam_title', 'question', 'question_title', 'question_description',
             'code', 'language', 'attempt_number', 'status',
             'submitted_at', 'time_remaining_seconds',
             'execution_time_ms', 'plagiarism_score',
