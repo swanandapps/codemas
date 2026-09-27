@@ -23,11 +23,11 @@ class ExamSerializer(serializers.ModelSerializer):  # serializes exam with neste
 
     class Meta:
         model = Exam
-        fields = ['id', 'title', 'description', 'created_by', 'duration_minutes', 'is_active', 'created_at', 'questions']
+        fields = ['id', 'title', 'description', 'created_by', 'duration_minutes', 'is_active', 'start_time', 'end_time', 'created_at', 'questions']
 
 
 class ExamCreateSerializer(serializers.ModelSerializer):  # used only for creating/updating exams
     class Meta:
         model = Exam
-        fields = ['id', 'title', 'description', 'duration_minutes', 'is_active']
+        fields = ['id', 'title', 'description', 'duration_minutes', 'is_active', 'start_time', 'end_time']
         read_only_fields = ['id']

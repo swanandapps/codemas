@@ -29,12 +29,47 @@
                         </span>
                     </div>
                 </div>
-                <div>
+                <div class="hero-actions">
                     <button v-if="exam.is_active" class="start-btn" @click="startExam">
                         Start Exam →
                     </button>
-                    <p v-else class="closed-msg">This exam is closed</p>
+                    <p v-else-if="!authStore.isTrainer" class="closed-msg">This exam is closed</p>
                 </div>
+            </div>
+
+            <!-- Trainer publish controls -->
+            <div v-if="authStore.isTrainer" class="publish-card">
+                <div class="publish-row">
+                    <div>
+                        <div class="publish-title">
+                            {{ exam.is_active ? 'This exam is live' : 'This exam is a draft' }}
+                        </div>
+                        <div class="publish-sub">
+                            {{ exam.is_active ? 'Students can take it now.' : 'Activate it to let students take it.' }}
+                        </div>
+                    </div>
+                    <button
+                        :class="['publish-btn', exam.is_active ? 'close' : 'activate']"
+                        :disabled="publishing"
+                        @click="toggleActive"
+                    >
+                        {{ publishing ? '…' : (exam.is_active ? 'Close Exam' : 'Activate Now') }}
+                    </button>
+                </div>
+
+                <div class="schedule-row">
+                    <div class="sched-field">
+                        <label>Opens at (optional)</label>
+                        <input type="datetime-local" v-model="schedule.start" />
+                    </div>
+                    <div class="sched-field">
+                        <label>Closes at (optional)</label>
+                        <input type="datetime-local" v-model="schedule.end" />
+                    </div>
+                    <button class="sched-btn" :disabled="publishing" @click="saveSchedule">Save schedule</button>
+                </div>
+                <p class="sched-hint">With a schedule set, the exam auto-opens and auto-closes at those times.</p>
+                <p v-if="publishError" class="state-msg error">{{ publishError }}</p>
             </div>
 
             <div class="section-header">
@@ -73,6 +108,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import api from '../api'
+import { useAuthStore } from '../stores/auth'
 
 interface Question {
     id: number
@@ -90,20 +126,37 @@ interface Exam {
     description: string
     duration_minutes: number
     is_active: boolean
+    start_time: string | null
+    end_time: string | null
     questions: Question[]
 }
 
 const router = useRouter()
 const route = useRoute()
+const authStore = useAuthStore()
 
 const exam = ref<Exam | null>(null)
 const loading = ref<boolean>(true)
 const error = ref<string>('')
 
+const publishing = ref<boolean>(false)
+const publishError = ref<string>('')
+const schedule = ref<{ start: string; end: string }>({ start: '', end: '' })
+
+// Convert an ISO timestamp to the value a datetime-local input expects
+function toLocalInput(iso: string | null): string {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 onMounted(async () => {
     try {
         const res = await api.get(`/exams/${route.params.id}/`)
         exam.value = res.data
+        schedule.value.start = toLocalInput(res.data.start_time)
+        schedule.value.end = toLocalInput(res.data.end_time)
     } catch (e: any) {
         error.value = e.response?.data?.error || 'Failed to load exam'
     } finally {
@@ -113,6 +166,37 @@ onMounted(async () => {
 
 function startExam(): void {
     router.push(`/exams/${route.params.id}/take`)
+}
+
+async function toggleActive(): Promise<void> {
+    if (!exam.value) return
+    publishing.value = true
+    publishError.value = ''
+    try {
+        const res = await api.patch(`/exams/${exam.value.id}/`, { is_active: !exam.value.is_active })
+        exam.value.is_active = res.data.is_active
+    } catch (e: any) {
+        publishError.value = e.response?.data?.error || 'Failed to update exam'
+    } finally {
+        publishing.value = false
+    }
+}
+
+async function saveSchedule(): Promise<void> {
+    if (!exam.value) return
+    publishing.value = true
+    publishError.value = ''
+    try {
+        const payload = {
+            start_time: schedule.value.start ? new Date(schedule.value.start).toISOString() : null,
+            end_time: schedule.value.end ? new Date(schedule.value.end).toISOString() : null,
+        }
+        await api.patch(`/exams/${exam.value.id}/`, payload)
+    } catch (e: any) {
+        publishError.value = e.response?.data?.error || 'Failed to save schedule'
+    } finally {
+        publishing.value = false
+    }
 }
 </script>
 
@@ -189,6 +273,39 @@ function startExam(): void {
 }
 .start-btn:hover { background: var(--red-hover); }
 .closed-msg { color: var(--text-dim); font-size: 14px; }
+.hero-actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+
+/* Trainer publish controls */
+.publish-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-bottom: 32px;
+}
+.publish-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.publish-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.publish-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.publish-btn {
+    padding: 9px 20px; border: none; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.publish-btn.activate { background: var(--green); color: #fff; }
+.publish-btn.close { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+.publish-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.schedule-row { display: flex; gap: 12px; align-items: flex-end; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.sched-field { display: flex; flex-direction: column; gap: 4px; }
+.sched-field label { font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.4px; }
+.sched-field input {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 10px; border-radius: var(--radius-sm); font-size: 13px;
+}
+.sched-btn {
+    padding: 8px 16px; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text-muted); border-radius: var(--radius-sm); font-size: 13px; cursor: pointer;
+}
+.sched-btn:hover { border-color: var(--border2); color: var(--text); }
+.sched-hint { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
 .section-header {
     display: flex;
     align-items: center;

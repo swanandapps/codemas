@@ -28,20 +28,22 @@ def execute_submission(submission_id):
     all_passed = True
 
     for test_case in test_cases:
-        print(f"[DOCKER] running test_case_id={test_case.id} input={test_case.input_data!r}")
-        output, error, exec_time = run_in_docker(
+        print(f"[EXEC] running test_case_id={test_case.id} input={test_case.input_data!r}")
+        # Local subprocess executor — for dev machines without Docker/Lambda.
+        # PROD path is run_in_docker / run_in_lambda (sandboxed); see below.
+        output, error, exec_time = run_local(
             code=submission.code,
             language=submission.language,
             input_data=test_case.input_data,
         )
-        # ── Lambda executor — uncomment to switch to Lambda ───────────────────
+        # ── Docker executor (prod) — uncomment when a Docker daemon is available ─
+        # output, error, exec_time = run_in_docker(
+        #     code=submission.code, language=submission.language, input_data=test_case.input_data)
+        # ── Lambda executor (prod) — uncomment to switch to Lambda ──────────────
         # output, error, exec_time = run_in_lambda(
-        #     code=submission.code,
-        #     language=submission.language,
-        #     input_data=test_case.input_data,
-        # )
+        #     code=submission.code, language=submission.language, input_data=test_case.input_data)
         # ─────────────────────────────────────────────────────────────────────
-        print(f"[DOCKER] output={output!r} error={error!r} exec_time={exec_time}ms")
+        print(f"[EXEC] output={output!r} error={error!r} exec_time={exec_time}ms")
 
         passed = (output.strip() == test_case.expected_output.strip())
         print(f"[RESULT] passed={passed} expected={test_case.expected_output!r} got={output.strip()!r}")
@@ -88,6 +90,64 @@ def execute_submission(submission_id):
             generate_hint.delay(submission_id)  # Socratic hint only on failed submissions
         except Exception as e:
             print(f"[AI] failed to enqueue hint generation: {e}")
+
+
+def run_local(code, language, input_data):
+    """Run student code as a local subprocess. DEV-ONLY executor.
+
+    SECURITY: this runs untrusted code directly on the host with no sandbox. It
+    exists so the pipeline works on a dev machine without Docker/Lambda. The
+    production path is run_in_docker / run_in_lambda (isolated, resource-capped).
+    Do NOT use this in production.
+    """
+    import subprocess, tempfile, time as _time
+    start = _time.time()
+    timeout = 10
+
+    def elapsed():
+        return int((_time.time() - start) * 1000)
+
+    try:
+        if language == 'python':
+            proc = subprocess.run(['python3', '-c', code], input=input_data,
+                                  capture_output=True, text=True, timeout=timeout)
+        elif language == 'javascript':
+            proc = subprocess.run(['node', '-e', code], input=input_data,
+                                  capture_output=True, text=True, timeout=timeout)
+        elif language in ('cpp', 'java'):
+            with tempfile.TemporaryDirectory() as d:
+                if language == 'cpp':
+                    src = os.path.join(d, 'main.cpp')
+                    with open(src, 'w') as f:
+                        f.write(code)
+                    comp = subprocess.run(['g++', '-O2', '-o', os.path.join(d, 'a.out'), src],
+                                          capture_output=True, text=True, timeout=timeout)
+                    if comp.returncode != 0:
+                        return '', comp.stderr or 'Compilation failed', elapsed()
+                    proc = subprocess.run([os.path.join(d, 'a.out')], input=input_data,
+                                          capture_output=True, text=True, timeout=timeout)
+                else:  # java
+                    src = os.path.join(d, 'Main.java')
+                    with open(src, 'w') as f:
+                        f.write(code)
+                    comp = subprocess.run(['javac', src], capture_output=True, text=True, timeout=timeout)
+                    if comp.returncode != 0:
+                        return '', comp.stderr or 'Compilation failed', elapsed()
+                    proc = subprocess.run(['java', '-cp', d, 'Main'], input=input_data,
+                                          capture_output=True, text=True, timeout=timeout)
+        else:
+            return '', f'Unsupported language: {language}', 0
+
+        if proc.returncode != 0:
+            return proc.stdout, proc.stderr or 'Runtime error', elapsed()
+        return proc.stdout, proc.stderr, elapsed()
+
+    except subprocess.TimeoutExpired:
+        return '', 'Time limit exceeded', timeout * 1000
+    except FileNotFoundError as e:
+        return '', f'Runtime not installed for {language}: {e}', elapsed()
+    except Exception as e:
+        return '', str(e), elapsed()
 
 
 def run_in_lambda(code, language, input_data):

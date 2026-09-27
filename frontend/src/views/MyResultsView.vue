@@ -59,51 +59,52 @@
                 </div>
             </div>
 
-            <!-- Activity Calendar -->
-            <div class="chart-card" v-if="myStats && Object.keys(myStats.activity_calendar).length > 0">
-                <h3>Activity — Last 52 Weeks</h3>
-                <div class="calendar-grid">
-                    <div
-                        v-for="(day, i) in calendarDays"
-                        :key="i"
-                        :class="['cal-cell', intensityClass(day.count)]"
-                        :title="`${day.date}: ${day.count} submission${day.count !== 1 ? 's' : ''}`"
-                    />
-                </div>
-                <div class="cal-legend">
-                    <span>Less</span>
-                    <div class="cal-cell l0" />
-                    <div class="cal-cell l1" />
-                    <div class="cal-cell l2" />
-                    <div class="cal-cell l3" />
-                    <div class="cal-cell l4" />
-                    <span>More</span>
-                </div>
-            </div>
-
-            <!-- Performance trend chart -->
-            <div class="chart-card" v-if="submissions.length > 1">
-                <h3>Submission History</h3>
-                <apexchart
-                    type="bar"
-                    height="200"
-                    :options="trendOptions"
-                    :series="trendSeries"
-                />
-            </div>
 
             <!-- Submissions list -->
             <div v-if="submissions.length === 0" class="empty">No submissions yet.</div>
 
             <!-- Grouped by exam -->
             <div v-for="group in groupedByExam" :key="group.exam_title" class="exam-group">
-                <div class="exam-group-header">
-                    <span class="exam-group-title">{{ group.exam_title }}</span>
-                    <span class="exam-group-meta">
-                        {{ group.submissions.length }} submission{{ group.submissions.length !== 1 ? 's' : '' }}
-                        &nbsp;·&nbsp;
-                        {{ group.passedCount }} passed
-                    </span>
+                <div class="exam-card">
+                    <div class="exam-card-top">
+                        <span class="exam-card-title">{{ group.exam_title }}</span>
+                        <span v-if="examStatByTitle[group.exam_title]?.rank" class="exam-rank">
+                            Rank #{{ examStatByTitle[group.exam_title].rank }}
+                            <span class="exam-rank-of">of {{ examStatByTitle[group.exam_title].cohort_size }}</span>
+                        </span>
+                    </div>
+
+                    <div class="exam-metrics" v-if="examStatByTitle[group.exam_title]">
+                        <div class="exam-metric">
+                            <span class="exam-metric-val">{{ examStatByTitle[group.exam_title].questions_solved }}/{{ examStatByTitle[group.exam_title].questions_total }}</span>
+                            <span class="exam-metric-label">Solved</span>
+                        </div>
+                        <div class="exam-metric">
+                            <span class="exam-metric-val accent">{{ examStatByTitle[group.exam_title].points }}</span>
+                            <span class="exam-metric-label">Points</span>
+                        </div>
+                        <div class="exam-metric">
+                            <span class="exam-metric-val">{{ examStatByTitle[group.exam_title].pass_rate }}%</span>
+                            <span class="exam-metric-label">Pass Rate</span>
+                        </div>
+                        <div class="exam-metric">
+                            <span class="exam-metric-val">{{ examStatByTitle[group.exam_title].attempts }}</span>
+                            <span class="exam-metric-label">Attempts</span>
+                        </div>
+                    </div>
+                    <div class="exam-metrics" v-else>
+                        <span class="exam-group-meta">{{ group.submissions.length }} submissions · {{ group.passedCount }} passed</span>
+                    </div>
+
+                    <!-- AI summary of the whole exam -->
+                    <div class="exam-ai" v-if="examStatByTitle[group.exam_title]">
+                        <div class="exam-ai-head"><span class="exam-ai-icon">✦</span> AI Summary</div>
+                        <p v-if="examSummaries[examStatByTitle[group.exam_title].exam_id]?.loading" class="exam-ai-muted">Generating summary…</p>
+                        <p v-else-if="examSummaries[examStatByTitle[group.exam_title].exam_id]?.text" class="exam-ai-text">
+                            {{ examSummaries[examStatByTitle[group.exam_title].exam_id].text }}
+                        </p>
+                        <p v-else class="exam-ai-muted">AI summary unavailable.</p>
+                    </div>
                 </div>
 
                 <div v-for="sub in group.submissions" :key="sub.id" class="submission-card">
@@ -151,6 +152,34 @@
                                     <span v-if="r.error_message" class="err">{{ r.error_message }}</span>
                                 </div>
                             </div>
+                        </div>
+
+                        <!-- AI feedback (rubric + hint) for this submission -->
+                        <div class="section">
+                            <div class="section-label">AI Feedback</div>
+                            <div v-if="!aiData[sub.id]?.loaded" class="loading-inline">Loading...</div>
+                            <template v-else>
+                                <div v-if="aiData[sub.id].rubric" class="ai-fb">
+                                    <div class="ai-fb-head">
+                                        <span class="ai-fb-icon">✦</span>
+                                        <span class="ai-fb-title">Rubric Score</span>
+                                        <span class="ai-fb-total" :class="scoreClass(aiData[sub.id].rubric.total_score, 8)">{{ aiData[sub.id].rubric.total_score }}/8</span>
+                                    </div>
+                                    <div v-for="dim in rubricDims(aiData[sub.id].rubric)" :key="dim.label" class="ai-fb-dim">
+                                        <div class="ai-fb-dim-top">
+                                            <span>{{ dim.label }}</span>
+                                            <span :class="scoreClass(dim.score, 2)">{{ dim.score }}/2</span>
+                                        </div>
+                                        <div class="ai-fb-bar"><div class="ai-fb-bar-fill" :class="scoreClass(dim.score, 2)" :style="{ width: (dim.score / 2 * 100) + '%' }"></div></div>
+                                        <p class="ai-fb-note">{{ dim.note }}</p>
+                                    </div>
+                                    <p class="ai-fb-overall">{{ aiData[sub.id].rubric.overall_feedback }}</p>
+                                </div>
+                                <div v-if="aiData[sub.id].hint" class="ai-fb-hint">
+                                    <span class="ai-fb-hint-label">Hint</span> {{ aiData[sub.id].hint }}
+                                </div>
+                                <div v-if="!aiData[sub.id].rubric && !aiData[sub.id].hint" class="loading-inline">No AI feedback for this submission.</div>
+                            </template>
                         </div>
                     </div>
                 </div>
@@ -206,15 +235,97 @@ const expanded = ref<Record<number, boolean>>({})
 const loading = ref<boolean>(true)
 const myStats = ref<MyStats | null>(null)
 
+// AI feedback (rubric + hint) per submission — lazy-loaded when a card expands
+interface AiFeedback { rubric: any | null; hint: string | null; loaded: boolean }
+const aiData = ref<Record<number, AiFeedback>>({})
+
+function scoreClass(score: number, max: number): string {
+    const pct = score / max
+    if (pct >= 0.75) return 'good'
+    if (pct >= 0.4) return 'mid'
+    return 'low'
+}
+function rubricDims(r: any) {
+    return [
+        { label: 'Correctness', score: r.correctness_score, note: r.correctness_note },
+        { label: 'Code Quality', score: r.code_quality_score, note: r.code_quality_note },
+        { label: 'Approach', score: r.approach_score, note: r.approach_note },
+        { label: 'Edge Cases', score: r.edge_case_score, note: r.edge_case_note },
+    ]
+}
+async function loadAi(submissionId: number): Promise<void> {
+    if (aiData.value[submissionId]?.loaded) return
+    const [r, h] = await Promise.all([
+        api.get(`/ai/rubric/${submissionId}/`).catch(() => null),
+        api.get(`/ai/hint/${submissionId}/`).catch(() => null),
+    ])
+    aiData.value[submissionId] = {
+        rubric: r && typeof r.data?.total_score === 'number' ? r.data : null,
+        hint: h && typeof h.data?.hint === 'string' ? h.data.hint : null,
+        loaded: true,
+    }
+}
+
+// Per-exam metrics + cohort rank
+interface ExamStat {
+    exam_id: number
+    exam_title: string
+    questions_total: number
+    questions_solved: number
+    points: number
+    attempts: number
+    passed: number
+    pass_rate: number
+    rank: number | null
+    cohort_size: number
+}
+const examStats = ref<ExamStat[]>([])
+const examStatByTitle = computed(() => {
+    const m: Record<string, ExamStat> = {}
+    for (const s of examStats.value) m[s.exam_title] = s
+    return m
+})
+
+// AI exam summaries, keyed by exam_id (generated on demand server-side)
+const examSummaries = ref<Record<number, { text: string | null; loading: boolean }>>({})
+async function loadExamSummary(examId: number): Promise<void> {
+    if (examSummaries.value[examId]) return
+    examSummaries.value[examId] = { text: null, loading: true }
+    try {
+        const res = await api.get(`/ai/exam-summary/${examId}/`)
+        examSummaries.value[examId] = { text: res.data?.summary ?? null, loading: false }
+    } catch {
+        examSummaries.value[examId] = { text: null, loading: false }
+    }
+}
+
 onMounted(async () => {
     try {
-        const [subsRes, statsRes] = await Promise.all([
-            api.get('/submissions/'),
-            api.get('/leaderboard/me/'),
-        ])
-        submissions.value = subsRes.data.results ?? subsRes.data
-        myStats.value = statsRes.data
-        await Promise.all(subsRes.data.map((s: Submission) => loadResults(s.id)))
+        // Submissions drive the history — load them first and independently so a
+        // stats failure can never blank out the history list.
+        const subsRes = await api.get('/submissions/')
+        const subs: Submission[] = subsRes.data.results ?? subsRes.data
+        submissions.value = subs
+
+        // Stats are best-effort — a failure here must not hide the history.
+        try {
+            const statsRes = await api.get('/leaderboard/me/')
+            myStats.value = statsRes.data
+        } catch {
+            myStats.value = null
+        }
+
+        // Per-exam metrics + rank, then kick off AI summaries in parallel.
+        try {
+            const examRes = await api.get('/leaderboard/me/exams/')
+            examStats.value = examRes.data
+            examStats.value.forEach(s => loadExamSummary(s.exam_id))
+        } catch {
+            examStats.value = []
+        }
+
+        // Test results are loaded lazily on expand (see toggleExpand) to keep the
+        // page-load request count low and avoid tripping API throttles.
     } finally {
         loading.value = false
     }
@@ -232,27 +343,8 @@ const groupedByExam = computed(() => {
     return Object.values(map)
 })
 
-const calendarDays = computed(() => {
-    const days = []
-    const today = new Date()
-    for (let i = 363; i >= 0; i--) {
-        const d = new Date(today)
-        d.setDate(d.getDate() - i)
-        const key = d.toISOString().slice(0, 10)
-        days.push({ date: key, count: myStats.value?.activity_calendar[key] ?? 0 })
-    }
-    return days
-})
-
-function intensityClass(count: number): string {
-    if (count === 0) return 'l0'
-    if (count === 1) return 'l1'
-    if (count <= 3) return 'l2'
-    if (count <= 5) return 'l3'
-    return 'l4'
-}
-
 async function loadResults(submissionId: number): Promise<void> {
+    if (results.value[submissionId]) return  // already loaded
     try {
         const res = await api.get(`/results/${submissionId}/`)
         results.value[submissionId] = res.data
@@ -263,6 +355,10 @@ async function loadResults(submissionId: number): Promise<void> {
 
 async function toggleExpand(submissionId: number): Promise<void> {
     expanded.value[submissionId] = !expanded.value[submissionId]
+    if (expanded.value[submissionId]) {
+        loadResults(submissionId)  // lazy — only when the card is opened
+        loadAi(submissionId)
+    }
 }
 
 // Stats computed from submissions
@@ -291,31 +387,6 @@ function formatDate(iso: string): string {
     return new Date(iso).toLocaleString()
 }
 
-// Chart — pass/fail per submission
-const trendSeries = computed(() => [{
-    name: 'Execution Time (ms)',
-    data: submissions.value
-        .filter(s => s.execution_time_ms)
-        .map(s => s.execution_time_ms as number),
-}])
-const trendOptions = computed(() => ({
-    chart: { toolbar: { show: false }, background: 'transparent' },
-    theme: { mode: 'dark' },
-    colors: submissions.value.map(s => s.status === 'passed' ? '#2ecc71' : '#e63946'),
-    plotOptions: { bar: { borderRadius: 4 } },
-    xaxis: {
-        categories: submissions.value
-            .filter(s => s.execution_time_ms)
-            .map((s, i) => `#${i + 1}`),
-        labels: { style: { fontSize: '11px' } },
-    },
-    yaxis: { labels: { formatter: (v: number) => v + 'ms' } },
-    dataLabels: { enabled: false },
-    grid: { borderColor: '#2a2a2a' },
-    tooltip: {
-        y: { formatter: (v: number) => v + 'ms' },
-    },
-}))
 </script>
 
 <style scoped>
@@ -350,39 +421,47 @@ h1 { margin-bottom: 24px; }
 .diff-count { font-size: 24px; font-weight: 700; color: var(--text); }
 .diff-pts { font-size: 11px; color: var(--text-dim); }
 
-.calendar-grid {
-    display: grid;
-    grid-template-columns: repeat(52, 1fr);
-    gap: 2px;
-    margin-bottom: 8px;
-}
-.cal-cell {
-    width: 100%;
-    aspect-ratio: 1;
-    border-radius: 2px;
-}
-.cal-cell.l0 { background: var(--surface3); }
-.cal-cell.l1 { background: rgba(46,204,113,0.25); }
-.cal-cell.l2 { background: rgba(46,204,113,0.5); }
-.cal-cell.l3 { background: rgba(46,204,113,0.75); }
-.cal-cell.l4 { background: var(--green); }
-.cal-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-dim); justify-content: flex-end; }
-.cal-legend .cal-cell { width: 12px; height: 12px; aspect-ratio: unset; }
-
-.chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
 h3 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 
 .exam-group { margin-bottom: 28px; }
-.exam-group-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 0 10px;
-    margin-bottom: 10px;
-    border-bottom: 1px solid var(--border);
-}
-.exam-group-title { font-size: 15px; font-weight: 700; color: var(--text); }
 .exam-group-meta { font-size: 12px; color: var(--text-dim); }
+
+/* Per-exam summary card */
+.exam-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-bottom: 12px;
+}
+.exam-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.exam-card-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.exam-rank {
+    font-size: 13px; font-weight: 700; color: var(--blue);
+    background: var(--blue-dim); border: 1px solid var(--blue);
+    padding: 4px 12px; border-radius: 20px;
+}
+.exam-rank-of { font-size: 11px; font-weight: 500; color: var(--text-dim); margin-left: 2px; }
+
+.exam-metrics { display: flex; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 14px; }
+.exam-metric { flex: 1; background: var(--surface2); padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }
+.exam-metric-val { font-size: 20px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.exam-metric-val.accent { color: var(--blue); }
+.exam-metric-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+
+.exam-ai {
+    border: 1px solid var(--blue);
+    border-radius: var(--radius-sm);
+    background: linear-gradient(180deg, var(--blue-dim), var(--surface2) 60px);
+    padding: 12px 14px;
+}
+.exam-ai-head { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--blue); margin-bottom: 8px; }
+.exam-ai-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 6px; background: var(--blue); color: #fff; font-size: 11px;
+}
+.exam-ai-text { font-size: 13px; color: var(--text); line-height: 1.65; margin: 0; }
+.exam-ai-muted { font-size: 12px; color: var(--text-dim); font-style: italic; margin: 0; }
 
 .submission-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; overflow: hidden; }
 .card-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; cursor: pointer; user-select: none; transition: background 0.15s; }
@@ -413,4 +492,49 @@ code { background: var(--surface3); padding: 2px 5px; border-radius: 3px; font-f
 .err { color: var(--red); font-size: 11px; font-style: italic; }
 .loading-inline { color: var(--text-dim); font-size: 13px; }
 .loading, .empty { color: var(--text-muted); }
+
+/* AI feedback block on each submission */
+.ai-fb {
+    border: 1px solid var(--blue);
+    border-radius: var(--radius-sm);
+    background: linear-gradient(180deg, var(--blue-dim), var(--surface2) 70px);
+    padding: 14px 16px;
+}
+.ai-fb-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.ai-fb-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px;
+    background: var(--blue); color: #fff; font-size: 12px;
+}
+.ai-fb-title { font-size: 12px; font-weight: 700; color: var(--text); }
+.ai-fb-total {
+    margin-left: auto; font-size: 14px; font-weight: 800;
+    padding: 2px 10px; border-radius: var(--radius-sm); font-variant-numeric: tabular-nums;
+}
+.ai-fb-total.good { background: rgba(46,204,113,0.15); color: var(--green); }
+.ai-fb-total.mid  { background: var(--yellow-dim); color: var(--yellow); }
+.ai-fb-total.low  { background: var(--red-dim); color: var(--red); }
+.ai-fb-dim { margin-bottom: 10px; }
+.ai-fb-dim-top { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.ai-fb-dim-top span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ai-fb-dim-top .good { color: var(--green); }
+.ai-fb-dim-top .mid  { color: var(--yellow); }
+.ai-fb-dim-top .low  { color: var(--red); }
+.ai-fb-bar { height: 6px; background: var(--surface3); border-radius: 3px; overflow: hidden; }
+.ai-fb-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.ai-fb-bar-fill.good { background: var(--green); }
+.ai-fb-bar-fill.mid  { background: var(--yellow); }
+.ai-fb-bar-fill.low  { background: var(--red); }
+.ai-fb-note { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 4px 0 0; }
+.ai-fb-overall {
+    font-size: 12px; color: var(--text); line-height: 1.6;
+    background: var(--surface); border-left: 3px solid var(--blue);
+    border-radius: var(--radius-sm); padding: 9px 11px; margin: 12px 0 0;
+}
+.ai-fb-hint {
+    margin-top: 10px; font-size: 12px; color: var(--text-muted); line-height: 1.6;
+    background: var(--yellow-dim); border: 1px solid var(--yellow);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+}
+.ai-fb-hint-label { font-weight: 700; color: var(--yellow); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; margin-right: 6px; }
 </style>

@@ -134,7 +134,7 @@ function logout(): void {
 <style scoped>
 .navbar {
     width: 240px;
-    min-height: 100vh;
+    height: 100vh;
     background: var(--surface);
     border-right: 1px solid var(--border);
     display: flex;
@@ -142,6 +142,8 @@ function logout(): void {
     position: fixed;
     left: 0; top: 0; bottom: 0;
     z-index: 100;
+    overflow-y: auto;       /* scroll when the menu is taller than the viewport */
+    overscroll-behavior: contain;
 }
 
 .brand {
@@ -150,6 +152,10 @@ function logout(): void {
     gap: 10px;
     padding: 24px 20px;
     border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    z-index: 1;
 }
 .logo {
     width: 34px;

@@ -81,3 +81,60 @@ class PlagiarismExplanationView(APIView):
             return Response({'status': 'pending'})
 
         return Response(PlagiarismExplanationSerializer(explanation).data)
+
+
+class ExamSummaryView(APIView):
+    """GET /api/ai/exam-summary/<exam_id>/
+
+    Returns the requesting student's AI summary for an exam, generating it on
+    first request (synchronous, then cached). Trainers may pass ?student=<id>
+    to view a specific student's summary.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id):
+        student_id = request.user.id
+        if request.user.role == 'trainer':
+            student_id = request.query_params.get('student', request.user.id)
+
+        from .tasks import generate_exam_summary
+        summary = generate_exam_summary(student_id, exam_id)
+        if not summary:
+            return Response({'status': 'unavailable'})
+
+        return Response({
+            'exam_id': int(exam_id),
+            'summary': summary.summary,
+            'model_used': summary.model_used,
+            'created_at': summary.created_at,
+        })
+
+
+class GenerateExamView(APIView):
+    """POST /api/ai/generate-exam/  (trainer-only)
+
+    Generates a DRAFT exam (questions + test cases) via GPT and returns it
+    WITHOUT persisting. The trainer reviews/edits, then saves via
+    /api/exams/create-full/ — that review step is the human-in-the-loop QA.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role != 'trainer':
+            return Response({'error': 'Only trainers can generate exams'}, status=status.HTTP_403_FORBIDDEN)
+
+        topic = (request.data.get('topic') or '').strip()
+        if not topic:
+            return Response({'error': 'topic is required'}, status=status.HTTP_400_BAD_REQUEST)
+        language = request.data.get('language', 'python')
+        num_questions = request.data.get('num_questions', 3)
+        difficulty = request.data.get('difficulty', 'medium')
+
+        from .tasks import generate_exam_draft
+        from .llm import LLMUnavailable
+        try:
+            draft = generate_exam_draft(topic, language, num_questions, difficulty)
+        except LLMUnavailable as e:
+            return Response({'error': f'AI generation unavailable: {e}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response(draft)

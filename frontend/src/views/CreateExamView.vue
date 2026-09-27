@@ -22,6 +22,81 @@
 
         <!-- Step 1: Exam Details -->
         <div v-if="step === 1" class="step-content">
+            <!-- AI exam generation (HITL: generate → review/edit → save) -->
+            <div class="ai-gen-card">
+                <div class="ai-gen-head">
+                    <span class="ai-gen-icon">✦</span>
+                    <span class="ai-gen-title">Generate with AI</span>
+                    <span class="ai-gen-chip">GPT</span>
+                </div>
+
+                <div v-if="!draft" class="ai-gen-form">
+                    <input v-model="gen.topic" placeholder="Topic — e.g. Python string manipulation, recursion, SQL joins" />
+                    <div class="ai-gen-row">
+                        <select v-model="gen.language">
+                            <option value="python">Python</option>
+                            <option value="javascript">JavaScript</option>
+                            <option value="java">Java</option>
+                            <option value="cpp">C++</option>
+                        </select>
+                        <select v-model="gen.difficulty">
+                            <option value="easy">Easy</option>
+                            <option value="medium">Medium</option>
+                            <option value="hard">Hard</option>
+                        </select>
+                        <input v-model.number="gen.num_questions" type="number" min="1" max="10" title="Number of questions" />
+                    </div>
+                    <button type="button" class="gen-btn" :disabled="genLoading || !gen.topic.trim()" @click="generate">
+                        {{ genLoading ? 'Generating…' : '✦ Generate Draft' }}
+                    </button>
+                    <p v-if="genError" class="error">{{ genError }}</p>
+                </div>
+
+                <!-- Review & edit the generated draft before saving -->
+                <div v-else class="ai-draft">
+                    <p class="ai-draft-note">Review and edit before saving — you have full control.</p>
+                    <label>Exam Title</label>
+                    <input v-model="draft.title" />
+                    <label>Description</label>
+                    <textarea v-model="draft.description" rows="2" />
+                    <label>Duration (minutes)</label>
+                    <input v-model.number="draft.duration_minutes" type="number" min="1" />
+
+                    <div v-for="(q, qi) in draft.questions" :key="qi" class="draft-q">
+                        <div class="draft-q-head">
+                            <span class="draft-q-num">Q{{ qi + 1 }}</span>
+                            <input v-model="q.title" class="draft-q-title" />
+                            <select v-model="q.difficulty" class="draft-q-diff">
+                                <option value="easy">Easy</option>
+                                <option value="medium">Medium</option>
+                                <option value="hard">Hard</option>
+                            </select>
+                            <button type="button" class="del-btn" @click="draft.questions.splice(qi, 1)">✕</button>
+                        </div>
+                        <textarea v-model="q.description" rows="3" class="draft-q-desc" />
+                        <div class="draft-tcs">
+                            <div v-for="(tc, ti) in q.test_cases" :key="ti" class="draft-tc">
+                                <input v-model="tc.input_data" placeholder="input (stdin)" />
+                                <span class="tc-arrow">→</span>
+                                <input v-model="tc.expected_output" placeholder="expected output" />
+                                <button type="button" class="del-btn" @click="q.test_cases.splice(ti, 1)">✕</button>
+                            </div>
+                            <button type="button" class="add-tc-btn" @click="q.test_cases.push({ input_data: '', expected_output: '' })">+ test case</button>
+                        </div>
+                    </div>
+
+                    <p v-if="genError" class="error">{{ genError }}</p>
+                    <div class="draft-actions">
+                        <button type="button" class="discard-btn" @click="draft = null">Discard</button>
+                        <button type="button" class="save-draft-btn" :disabled="saveLoading || !draft.questions.length" @click="saveDraft">
+                            {{ saveLoading ? 'Saving…' : `Save Exam (${draft.questions.length} questions)` }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="or-divider"><span>or create manually</span></div>
+
             <h2>Step 1 — Exam Details</h2>
             <form @submit.prevent="createExam">
                 <label>Title</label>
@@ -206,6 +281,44 @@ const exam = ref({ title: '', description: '', duration_minutes: 60, is_active: 
 const createdExam = ref<CreatedExam | null>(null)
 const loading = ref<boolean>(false)
 const error = ref<string>('')
+
+// AI exam generation (HITL: generate draft → review/edit → save)
+interface DraftTestCase { input_data: string; expected_output: string }
+interface DraftQuestion { title: string; description: string; difficulty: string; language?: string; test_cases: DraftTestCase[] }
+interface ExamDraft { title: string; description: string; duration_minutes: number; questions: DraftQuestion[] }
+
+const gen = ref({ topic: '', language: 'python', difficulty: 'medium', num_questions: 3 })
+const genLoading = ref<boolean>(false)
+const genError = ref<string>('')
+const draft = ref<ExamDraft | null>(null)
+const saveLoading = ref<boolean>(false)
+
+async function generate(): Promise<void> {
+    genLoading.value = true
+    genError.value = ''
+    try {
+        const res = await api.post('/ai/generate-exam/', gen.value)
+        draft.value = { ...res.data, duration_minutes: 60 }
+    } catch (e: any) {
+        genError.value = e.response?.data?.error || 'Generation failed'
+    } finally {
+        genLoading.value = false
+    }
+}
+
+async function saveDraft(): Promise<void> {
+    if (!draft.value) return
+    saveLoading.value = true
+    genError.value = ''
+    try {
+        const res = await api.post('/exams/create-full/', { ...draft.value, language: gen.value.language })
+        router.push(`/exams/${res.data.id}`)
+    } catch (e: any) {
+        genError.value = e.response?.data?.error || 'Save failed'
+    } finally {
+        saveLoading.value = false
+    }
+}
 
 // Step 2
 const questions = ref<Question[]>([])
@@ -437,4 +550,77 @@ code {
 }
 .finish-btn:hover { border-color: var(--red); color: var(--red); }
 .error { color: var(--red); font-size: 13px; padding: 8px 12px; background: var(--red-dim); border-radius: var(--radius-sm); }
+
+/* AI exam generation */
+.ai-gen-card {
+    border: 1px solid var(--blue);
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, var(--blue-dim), var(--surface) 70px);
+    padding: 18px 20px;
+    margin-bottom: 8px;
+}
+.ai-gen-head { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
+.ai-gen-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 7px; background: var(--blue); color: #fff;
+}
+.ai-gen-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.ai-gen-chip {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.5px; padding: 2px 8px;
+    border-radius: 10px; background: var(--blue-dim); color: var(--blue); border: 1px solid var(--blue);
+}
+.ai-gen-form { display: flex; flex-direction: column; gap: 10px; }
+.ai-gen-form input, .ai-gen-form select { margin: 0; }
+.ai-gen-row { display: flex; gap: 10px; }
+.ai-gen-row select, .ai-gen-row input { flex: 1; }
+.gen-btn {
+    align-self: flex-start; padding: 10px 22px; background: var(--blue); color: #fff;
+    border: none; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.gen-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ai-draft { display: flex; flex-direction: column; gap: 8px; }
+.ai-draft-note { font-size: 12px; color: var(--blue); margin: 0 0 4px; font-weight: 600; }
+.draft-q {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface2); padding: 12px; margin-top: 10px;
+}
+.draft-q-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.draft-q-num { font-size: 12px; font-weight: 700; color: var(--text-dim); }
+.draft-q-title { flex: 1; margin: 0; font-weight: 600; }
+.draft-q-diff { width: auto; margin: 0; }
+.draft-q-desc { margin: 0 0 8px; }
+.draft-tcs { display: flex; flex-direction: column; gap: 6px; }
+.draft-tc { display: flex; align-items: center; gap: 6px; }
+.draft-tc input { margin: 0; font-family: monospace; font-size: 12px; }
+.tc-arrow { color: var(--text-dim); }
+.del-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: var(--radius-sm); width: 28px; height: 28px; cursor: pointer; flex-shrink: 0;
+}
+.del-btn:hover { border-color: var(--red); color: var(--red); }
+.add-tc-btn {
+    align-self: flex-start; background: transparent; border: 1px dashed var(--border);
+    color: var(--text-muted); border-radius: var(--radius-sm); padding: 5px 12px; font-size: 12px; cursor: pointer;
+}
+.add-tc-btn:hover { border-color: var(--blue); color: var(--blue); }
+.draft-actions { display: flex; gap: 12px; margin-top: 14px; }
+.discard-btn {
+    padding: 10px 20px; background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); border-radius: var(--radius-sm); cursor: pointer; font-size: 14px;
+}
+.save-draft-btn {
+    padding: 10px 24px; background: var(--blue); color: #fff; border: none;
+    border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.save-draft-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.or-divider {
+    text-align: center; border-top: 1px solid var(--border);
+    margin: 20px 0 8px; position: relative;
+}
+.or-divider span {
+    position: relative; top: -10px; background: var(--bg); padding: 0 12px;
+    font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px;
+}
 </style>

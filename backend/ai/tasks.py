@@ -15,12 +15,19 @@ RUBRIC_SYSTEM_PROMPT = (
     "You are a senior software engineer grading a coding-exam submission. "
     "Score the submission on four dimensions, each an INTEGER from 0 to 2 "
     "(0 = poor, 1 = adequate, 2 = excellent):\n"
-    "- correctness: how well the code solves the problem and passes the tests\n"
+    "- correctness: does the code produce correct results? Judge this PRIMARILY "
+    "on the TEST RESULTS provided. If all test cases pass, correctness is 2; if "
+    "most pass, 1; if few or none pass, 0. Do NOT lower correctness just because "
+    "the algorithm differs from a suggested technique — that belongs under approach.\n"
     "- code_quality: readability, naming, and structure\n"
-    "- approach: how optimal or well-reasoned the algorithm is\n"
+    "- approach: how optimal or well-reasoned the algorithm is. You may note here "
+    "(not under correctness) if a specifically requested technique was not used, but "
+    "a correct, efficient alternative still deserves partial or full credit.\n"
     "- edge_cases: how well boundary conditions are handled\n"
     "Each dimension needs a single-sentence justification. Also give 2-3 "
-    "sentences of overall, constructive feedback addressed to the student.\n"
+    "sentences of overall, constructive feedback addressed to the student. Keep "
+    "the tone fair: passing all tests is a strong result, even if the approach "
+    "differs from what was suggested.\n"
     "Respond ONLY with a JSON object of this exact shape:\n"
     "{\n"
     '  "correctness": {"score": <0-2>, "note": "<one sentence>"},\n'
@@ -252,3 +259,150 @@ def explain_plagiarism(flag_id):
         model_used=DEFAULT_MODEL,
     )
     logger.info('explain_plagiarism: stored explanation for flag %s', flag_id)
+
+
+EXAM_SUMMARY_SYSTEM_PROMPT = (
+    "You are a coding instructor writing a short, encouraging performance summary "
+    "for a student about how they did across one exam. Use the per-question "
+    "outcomes and rubric scores provided. Write 3-4 sentences addressed to the "
+    "student ('you'): note overall performance, a clear strength, and one concrete "
+    "area to improve. Be specific and constructive, not generic.\n"
+    "Respond ONLY with a JSON object: {\"summary\": \"<3-4 sentences>\"}"
+)
+
+
+def generate_exam_summary(student_id, exam_id):
+    """Generate and store an exam-level summary for one student. Returns the
+    ExamSummary instance, or None if unavailable (no key / provider error).
+
+    Safe to call inline from a view (synchronous) or as a Celery task.
+    """
+    Submission = apps.get_model('submissions', 'Submission')
+    RubricScore = apps.get_model('ai', 'RubricScore')
+    ExamSummary = apps.get_model('ai', 'ExamSummary')
+    Exam = apps.get_model('exams', 'Exam')
+
+    existing = ExamSummary.objects.filter(student_id=student_id, exam_id=exam_id).first()
+    if existing:
+        return existing
+
+    exam = Exam.objects.filter(pk=exam_id).first()
+    if not exam:
+        return None
+
+    subs = (
+        Submission.objects
+        .filter(student_id=student_id, exam_id=exam_id)
+        .select_related('question').order_by('question_id', 'attempt_number')
+    )
+    if not subs:
+        return None
+
+    rubric_by_sub = {
+        r.submission_id: r
+        for r in RubricScore.objects.filter(submission__in=subs)
+    }
+
+    lines = []
+    for s in subs:
+        line = f"- {s.question.title} (attempt {s.attempt_number}): {s.status}"
+        r = rubric_by_sub.get(s.id)
+        if r:
+            line += (
+                f"; rubric {r.total_score}/8 "
+                f"(correctness {r.correctness_score}, quality {r.code_quality_score}, "
+                f"approach {r.approach_score}, edge {r.edge_case_score})"
+            )
+        lines.append(line)
+
+    user_prompt = (
+        f"EXAM: {exam.title}\n\n"
+        f"This student's submissions and rubric scores:\n" + "\n".join(lines)
+    )
+
+    try:
+        data = call_json(EXAM_SUMMARY_SYSTEM_PROMPT, user_prompt)
+    except LLMUnavailable as e:
+        logger.info('generate_exam_summary: skipped student %s exam %s (%s)', student_id, exam_id, e)
+        return None
+
+    summary_text = (data.get('summary') or '').strip() if isinstance(data, dict) else ''
+    if not summary_text:
+        return None
+
+    from .llm import DEFAULT_MODEL
+    obj, _ = ExamSummary.objects.get_or_create(
+        student_id=student_id, exam_id=exam_id,
+        defaults={'summary': summary_text, 'model_used': DEFAULT_MODEL},
+    )
+    return obj
+
+
+@shared_task
+def exam_summary_task(student_id, exam_id):
+    """Celery wrapper so summaries can also be pre-generated in the background."""
+    generate_exam_summary(student_id, exam_id)
+
+
+EXAM_GEN_SYSTEM_PROMPT = (
+    "You are an expert coding-exam author. Generate a coding exam as JSON. "
+    "Every question must be solvable in the requested language by reading from "
+    "stdin and printing to stdout. The description MUST state the exact input "
+    "format (per line) and output format. Each question needs exactly 3 test "
+    "cases with concrete input_data and the EXACT expected_output a correct "
+    "program would print (no trailing prose). Keep inputs simple and "
+    "unambiguous.\n"
+    "Respond ONLY with a JSON object of this exact shape:\n"
+    "{\n"
+    '  "title": "<exam title>",\n'
+    '  "description": "<one-line exam description>",\n'
+    '  "questions": [\n'
+    '    {\n'
+    '      "title": "<question title>",\n'
+    '      "description": "<problem statement incl. input/output format>",\n'
+    '      "difficulty": "easy" | "medium" | "hard",\n'
+    '      "test_cases": [ {"input_data": "<stdin>", "expected_output": "<stdout>"} ]\n'
+    '    }\n'
+    "  ]\n"
+    "}"
+)
+
+
+def generate_exam_draft(topic, language, num_questions, difficulty):
+    """Return a draft exam dict from GPT. Does NOT persist anything.
+
+    Raises LLMUnavailable if no key / provider error so the view can 503.
+    """
+    num_questions = max(1, min(10, int(num_questions)))
+    user_prompt = (
+        f"Topic: {topic}\n"
+        f"Language: {language}\n"
+        f"Number of questions: {num_questions}\n"
+        f"Overall difficulty: {difficulty}\n"
+        f"Each question must have exactly 3 test cases."
+    )
+    data = call_json(EXAM_GEN_SYSTEM_PROMPT, user_prompt)
+
+    # Normalize defensively so the frontend always gets a consistent shape.
+    questions = []
+    for q in (data.get('questions') or [])[:num_questions]:
+        diff = str(q.get('difficulty', difficulty)).lower()
+        if diff not in ('easy', 'medium', 'hard'):
+            diff = 'medium'
+        tcs = [
+            {'input_data': str(tc.get('input_data', '')), 'expected_output': str(tc.get('expected_output', ''))}
+            for tc in (q.get('test_cases') or [])
+        ]
+        questions.append({
+            'title': str(q.get('title', 'Untitled question'))[:300],
+            'description': str(q.get('description', '')),
+            'language': language,
+            'difficulty': diff,
+            'test_cases': tcs,
+        })
+
+    return {
+        'title': str(data.get('title', topic))[:200],
+        'description': str(data.get('description', '')),
+        'questions': questions,
+    }

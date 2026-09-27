@@ -81,3 +81,25 @@ class PlagiarismExplanation(models.Model):
 
     def __str__(self):
         return f"PlagiarismExplanation(flag={self.flag_id}, conf={self.confidence})"
+
+
+class ExamSummary(models.Model):
+    """GPT-generated summary of how one student did across a whole exam.
+
+    Aggregates that student's per-submission rubric scores and pass/fail outcomes
+    for the exam into a short narrative. One row per (student, exam); generated on
+    demand the first time the student views it.
+    """
+    student = models.ForeignKey(
+        'accounts.User', on_delete=models.CASCADE, related_name='exam_summaries',
+    )
+    exam = models.ForeignKey('exams.Exam', on_delete=models.CASCADE, related_name='ai_summaries')
+    summary = models.TextField()                                  # 3-4 sentence overview
+    model_used = models.CharField(max_length=60, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('student', 'exam')
+
+    def __str__(self):
+        return f"ExamSummary(student={self.student_id}, exam={self.exam_id})"

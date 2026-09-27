@@ -47,12 +47,19 @@
                 <codemirror
                     v-model="code"
                     :extensions="editorExtensions"
-                    style="height: 400px; font-size: 14px;"
+                    class="editor-cm"
+                    style="font-size: 14px;"
+                    placeholder="Write your solution here..."
                 />
 
             </div>
 
             <div class="results-area">
+                <div v-if="!submissionStatus" class="results-empty">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                    <p>Run your code to see test results and AI feedback here.</p>
+                </div>
+
                 <div v-if="submissionStatus" class="result-box" :class="submissionStatus">
                     <p v-if="submissionStatus === 'running'">Running tests...</p>
                     <p v-else-if="submissionStatus === 'passed'">All tests passed!</p>
@@ -230,10 +237,25 @@ onMounted(async () => {
         startTimer()
         attachPasteListener()
         attachTabSwitchListener()
+        await loadAttemptsUsed()
     } catch {
         router.push('/exams')
     }
 })
+
+// Load the student's existing attempts per question so the counter and the
+// Submit button reflect reality (attempts persist across sessions server-side).
+async function loadAttemptsUsed(): Promise<void> {
+    try {
+        const res = await api.get('/submissions/', { params: { exam: route.params.id } })
+        const subs = res.data.results ?? res.data
+        const counts: Record<number, number> = {}
+        for (const s of subs) counts[s.question] = (counts[s.question] || 0) + 1
+        attemptsUsed.value = counts
+    } catch {
+        // non-fatal — counter just starts at 0
+    }
+}
 
 onUnmounted(() => {
     if (timerInterval) clearInterval(timerInterval)
@@ -350,18 +372,36 @@ function listenForResult(submissionId: number): void {
 
         if (data.status === 'passed' || data.status === 'failed') {
             eventSource?.close()
-            const res = await api.get(`/results/${submissionId}/`)
-            results.value = res.data
-            pollRubric(submissionId)  // AI rubric arrives a few seconds later
-            if (data.status === 'failed') {
-                pollHint(submissionId)  // Socratic hint only on failed submissions
-            }
+            await finalizeResult(submissionId, data.status)
         }
     }
 
-    eventSource.onerror = () => {
+    // If the stream drops, don't just give up — fetch the final state directly so
+    // results and AI feedback still load (the result may have completed server-side).
+    eventSource.onerror = async () => {
         eventSource?.close()
-        submissionStatus.value = 'failed'
+        try {
+            const subRes = await api.get(`/submissions/${submissionId}/`)
+            const st = subRes.data.status
+            if (st === 'passed' || st === 'failed') {
+                submissionStatus.value = st
+                await finalizeResult(submissionId, st)
+            } else {
+                submissionStatus.value = 'failed'
+            }
+        } catch {
+            submissionStatus.value = 'failed'
+        }
+    }
+}
+
+// Load test results and kick off AI polling for a finished submission.
+async function finalizeResult(submissionId: number, status: string): Promise<void> {
+    const res = await api.get(`/results/${submissionId}/`)
+    results.value = res.data
+    pollRubric(submissionId)  // AI rubric arrives a few seconds later
+    if (status === 'failed') {
+        pollHint(submissionId)  // Socratic hint only on failed submissions
     }
 }
 
@@ -476,6 +516,10 @@ function pollHint(submissionId: number, attempt = 0): void {
     background: var(--bg);
     overflow: hidden;
 }
+/* Let the editor fill the panel instead of a fixed 400px (kills dead space) */
+.editor-cm { flex: 1; min-height: 0; overflow: hidden; }
+.editor-cm :deep(.cm-editor) { height: 100%; }
+.editor-cm :deep(.cm-scroller) { overflow: auto; }
 .editor-header {
     display: flex;
     justify-content: space-between;
@@ -511,6 +555,18 @@ function pollHint(submissionId: number, attempt = 0): void {
     overflow-y: auto;
     padding: 16px;
 }
+.results-empty {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 40px 20px;
+}
+.results-empty p { font-size: 13px; max-width: 220px; line-height: 1.5; margin: 0; }
 .result-box {
     padding: 16px;
     border-radius: var(--radius);

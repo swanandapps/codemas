@@ -29,6 +29,55 @@ class ExamListCreateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class ExamFullCreateView(APIView):
+    """POST /api/exams/create-full/ — create an exam with questions AND test cases
+    in one atomic call. Used to persist an (AI-generated, trainer-reviewed) draft.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role != 'trainer':
+            return Response({'error': 'Only trainers can create exams'}, status=status.HTTP_403_FORBIDDEN)
+
+        from django.db import transaction
+        d = request.data
+        title = (d.get('title') or '').strip()
+        if not title:
+            return Response({'error': 'title is required'}, status=status.HTTP_400_BAD_REQUEST)
+        default_language = d.get('language', 'python')
+
+        try:
+            with transaction.atomic():
+                exam = Exam.objects.create(
+                    title=title[:200],
+                    description=d.get('description', '') or '',
+                    duration_minutes=int(d.get('duration_minutes', 60)),
+                    created_by=request.user,
+                )
+                for q in d.get('questions', []):
+                    question = Question.objects.create(
+                        exam=exam,
+                        title=str(q.get('title', 'Untitled'))[:300],
+                        description=q.get('description', '') or '',
+                        language=q.get('language', default_language),
+                        difficulty=q.get('difficulty', 'medium'),
+                        max_attempts=int(q.get('max_attempts', 3)),
+                        tags=q.get('tags', '') or '',
+                    )
+                    for tc in q.get('test_cases', []):
+                        TestCase.objects.create(
+                            question=question,
+                            input_data=str(tc.get('input_data', '')),
+                            expected_output=str(tc.get('expected_output', '')),
+                            is_hidden=tc.get('is_hidden', True),
+                        )
+        except (ValueError, TypeError) as e:
+            return Response({'error': f'Invalid payload: {e}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'id': exam.id, 'title': exam.title, 'questions': exam.questions.count()},
+                        status=status.HTTP_201_CREATED)
+
+
 class ExamDetailView(APIView):
     permission_classes = [IsAuthenticated]  # must be logged in
 

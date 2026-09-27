@@ -1,5 +1,5 @@
 from django.contrib import admin  # Django admin registry
-from .models import RubricScore, AIHint, PlagiarismExplanation
+from .models import RubricScore, AIHint, PlagiarismExplanation, ExamSummary
 
 
 @admin.register(RubricScore)
@@ -17,4 +17,10 @@ class AIHintAdmin(admin.ModelAdmin):
 @admin.register(PlagiarismExplanation)
 class PlagiarismExplanationAdmin(admin.ModelAdmin):
     list_display = ('flag', 'confidence', 'model_used', 'created_at')
+    readonly_fields = ('created_at',)
+
+
+@admin.register(ExamSummary)
+class ExamSummaryAdmin(admin.ModelAdmin):
+    list_display = ('student', 'exam', 'model_used', 'created_at')
     readonly_fields = ('created_at',)

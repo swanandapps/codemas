@@ -77,9 +77,9 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '20/hour',       # unauthenticated — login attempts etc.
-        'user': '200/hour',      # authenticated general use
-        'submissions': '30/hour', # tighter limit on code submission
+        'anon': '20/hour',        # unauthenticated — login attempts etc.
+        'user': '2000/hour',      # authenticated general use — dashboards make many reads per view
+        'submissions': '30/hour', # tighter limit on code submission (writes)
     },
 }
 

@@ -105,3 +105,65 @@ class MyStatsView(APIView):
             'activity_calendar': activity_map,
             'difficulty_breakdown': difficulty_breakdown,
         })
+
+
+# Points awarded per solved question, by difficulty (matches the ×10/×20/×30 UI)
+DIFFICULTY_POINTS = {'easy': 10, 'medium': 20, 'hard': 30}
+
+
+class MyExamStatsView(APIView):
+    """GET /api/leaderboard/me/exams/
+
+    Per-exam metrics for the requesting student, plus their rank within their
+    cohort for each exam (ranked by points earned in that exam).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from exams.models import Exam
+        user = request.user
+
+        exam_ids = (
+            Submission.objects.filter(student=user)
+            .values_list('exam_id', flat=True).distinct()
+        )
+        cohort_ids = list(
+            User.objects.filter(role='student', cohort=user.cohort)
+            .values_list('id', flat=True)
+        )
+
+        out = []
+        for exam in Exam.objects.filter(id__in=list(exam_ids)):
+            q_difficulty = {q.id: q.difficulty for q in exam.questions.all()}
+
+            def points_for(student_id):
+                solved = (
+                    Submission.objects
+                    .filter(student_id=student_id, exam=exam, status='passed')
+                    .values_list('question_id', flat=True).distinct()
+                )
+                return sum(DIFFICULTY_POINTS.get(q_difficulty.get(qid), 0) for qid in solved)
+
+            # Rank the whole cohort by points earned in THIS exam
+            ranked = sorted(((sid, points_for(sid)) for sid in cohort_ids), key=lambda x: -x[1])
+            rank = next((i + 1 for i, (sid, _) in enumerate(ranked) if sid == user.id), None)
+
+            my_subs = Submission.objects.filter(student=user, exam=exam)
+            total = my_subs.count()
+            passed = my_subs.filter(status='passed').count()
+            solved_ids = set(my_subs.filter(status='passed').values_list('question_id', flat=True))
+
+            out.append({
+                'exam_id': exam.id,
+                'exam_title': exam.title,
+                'questions_total': len(q_difficulty),
+                'questions_solved': len(solved_ids),
+                'points': points_for(user.id),
+                'attempts': total,
+                'passed': passed,
+                'pass_rate': round(passed / total * 100, 1) if total else 0,
+                'rank': rank,
+                'cohort_size': len(cohort_ids),
+            })
+
+        return Response(out)
