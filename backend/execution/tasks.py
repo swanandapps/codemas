@@ -103,6 +103,12 @@ def run_local(code, language, input_data):
     import subprocess, tempfile, time as _time
     start = _time.time()
     timeout = 10
+    # Children get no inherited env, so student code can't read DB/API secrets via os.environ
+    env = {'PATH': os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin'), 'LANG': 'C.UTF-8'}
+    sandbox = {'env': env}
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
+        # In the container we run as root: drop children to nobody so they can't read /proc/1/environ
+        sandbox.update(user=65534, group=65534, extra_groups=[])
 
     def elapsed():
         return int((_time.time() - start) * 1000)
@@ -110,31 +116,32 @@ def run_local(code, language, input_data):
     try:
         if language == 'python':
             proc = subprocess.run(['python3', '-c', code], input=input_data,
-                                  capture_output=True, text=True, timeout=timeout)
+                                  capture_output=True, **sandbox, text=True, timeout=timeout)
         elif language == 'javascript':
             proc = subprocess.run(['node', '-e', code], input=input_data,
-                                  capture_output=True, text=True, timeout=timeout)
+                                  capture_output=True, **sandbox, text=True, timeout=timeout)
         elif language in ('cpp', 'java'):
             with tempfile.TemporaryDirectory() as d:
+                os.chmod(d, 0o777)  # writable by the unprivileged child (compiler output)
                 if language == 'cpp':
                     src = os.path.join(d, 'main.cpp')
                     with open(src, 'w') as f:
                         f.write(code)
                     comp = subprocess.run(['g++', '-O2', '-o', os.path.join(d, 'a.out'), src],
-                                          capture_output=True, text=True, timeout=timeout)
+                                          capture_output=True, **sandbox, text=True, timeout=timeout)
                     if comp.returncode != 0:
                         return '', comp.stderr or 'Compilation failed', elapsed()
                     proc = subprocess.run([os.path.join(d, 'a.out')], input=input_data,
-                                          capture_output=True, text=True, timeout=timeout)
+                                          capture_output=True, **sandbox, text=True, timeout=timeout)
                 else:  # java
                     src = os.path.join(d, 'Main.java')
                     with open(src, 'w') as f:
                         f.write(code)
-                    comp = subprocess.run(['javac', src], capture_output=True, text=True, timeout=timeout)
+                    comp = subprocess.run(['javac', src], capture_output=True, **sandbox, text=True, timeout=timeout)
                     if comp.returncode != 0:
                         return '', comp.stderr or 'Compilation failed', elapsed()
                     proc = subprocess.run(['java', '-cp', d, 'Main'], input=input_data,
-                                          capture_output=True, text=True, timeout=timeout)
+                                          capture_output=True, **sandbox, text=True, timeout=timeout)
         else:
             return '', f'Unsupported language: {language}', 0
 

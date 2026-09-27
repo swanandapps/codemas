@@ -127,7 +127,7 @@ import { Codemirror } from 'vue-codemirror'
 import { python } from '@codemirror/lang-python'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
-import api from '../api'
+import api, { API_BASE_URL } from '../api'
 
 interface Question {
     id: number
@@ -363,7 +363,7 @@ function listenForResult(submissionId: number): void {
 
     // SSE doesn't support custom headers — pass token as query param
     eventSource = new EventSource(
-        `http://localhost:8000/api/submissions/${submissionId}/stream/?token=${token}`
+        `${API_BASE_URL}/submissions/${submissionId}/stream/?token=${token}`
     )
 
     eventSource.onmessage = async (event: MessageEvent) => {

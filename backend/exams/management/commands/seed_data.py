@@ -1,3 +1,4 @@
+import os
 import random
 from datetime import timedelta
 from django.core.management.base import BaseCommand
@@ -599,7 +600,7 @@ class Command(BaseCommand):
             defaults={'email': 'trainer@codemas.dev', 'role': 'trainer'}
         )
         if created:
-            trainer.set_password('trainer123')
+            trainer.set_password(os.getenv('SEED_TRAINER_PASSWORD', 'trainer123'))
             trainer.save()
             self.stdout.write('Created trainer account (trainer / trainer123)')
         return trainer
@@ -663,7 +664,7 @@ class Command(BaseCommand):
                 }
             )
             if created:
-                student.set_password('student123')
+                student.set_password(os.getenv('SEED_STUDENT_PASSWORD', 'student123'))
                 student.save()
             students.append(student)
         self.stdout.write(f'  Created {len(students)} students')

@@ -1,7 +1,10 @@
 import axios, { type AxiosRequestConfig } from 'axios'  // axios HTTP client with TypeScript types
 
+// Django backend — VITE_API_URL is baked in at build time (set on the Railway frontend service)
+export const API_BASE_URL: string = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+
 const api = axios.create({
-    baseURL: 'http://localhost:8000/api',  // Django backend
+    baseURL: API_BASE_URL,
 })
 
 // attach JWT token to every request automatically
@@ -21,7 +24,7 @@ api.interceptors.response.use(
             const refresh: string | null = localStorage.getItem('refresh_token')
             if (refresh) {
                 try {
-                    const res = await axios.post('http://localhost:8000/api/auth/refresh/', { refresh })
+                    const res = await axios.post(`${API_BASE_URL}/auth/refresh/`, { refresh })
                     localStorage.setItem('access_token', res.data.access)  // save new token
                     error.config.headers.Authorization = `Bearer ${res.data.access}`
                     return axios(error.config as AxiosRequestConfig)  // retry original request with new token

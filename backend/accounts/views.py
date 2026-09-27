@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.conf import settings
 from django.contrib.auth import authenticate
 from .serializers import RegisterSerializer, UserSerializer
 from .models import User
@@ -12,6 +13,8 @@ class RegisterView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        if not settings.ALLOW_SIGNUP:
+            return Response({'detail': 'Registration is disabled.'}, status=status.HTTP_403_FORBIDDEN)
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
