@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CodeMas grading pipeline - one queue, one dead-letter queue, one Lambda function (codemas-exec).
+
+# Deployed by deploy/aws/deploy.sh, which fills build/exec/ (handler.py + sandbox.py only) and
+# build/node-layer.zip (bin/node), then runs `aws cloudformation package` to upload both to S3.
+# The relative paths below resolve against this file's directory, so ../../build is <repo>/build.
+
+Parameters:
+  CodemasApiUrl:
+    Type: String
+    Description: Public base URL of the Django backend (Railway), e.g. https://codemas-api.up.railway.app
+    AllowedPattern: '^https://[^\s]+$'
+    ConstraintDescription: must be an https:// URL
+# No signing secret: student code runs in this function, so it holds no secrets and no expected
+# outputs. Each SQS message carries a per-job token minted by the relay (Railway); see
+# docs/superpowers/specs/2026-10-04-lambda-guardrails.md.
+
+Resources:
+  ExecDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: codemas-exec-dlq
+      MessageRetentionPeriod: 1209600     # 14 days, the SQS maximum
+      SqsManagedSseEnabled: true
+
+  ExecQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: codemas-exec
+      VisibilityTimeout: 540              # 6x the 90 s function timeout (AWS guidance for SQS triggers)
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ExecDLQ.Arn
+        maxReceiveCount: 3
+
+  NodeLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: codemas-node22
+      Description: Node.js 22 runtime binary at /opt/bin/node (no CodeMas code)
+      Content: ../../build/node-layer.zip
+      CompatibleRuntimes: [python3.12]
+      CompatibleArchitectures: [arm64]
+
+  # Created up front so the logs expire; otherwise Lambda creates it on first run with no retention.
+  ExecLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/codemas-exec
+      RetentionInDays: 14
+
+  ExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: read-exec-queue
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes, sqs:ChangeMessageVisibility]
+                Resource: !GetAtt ExecQueue.Arn
+        # Instead of the account-wide AWSLambdaBasicExecutionRole: write to this function's own log
+        # group only. No logs:CreateLogGroup, because ExecLogGroup is created by the stack.
+        - PolicyName: write-own-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ExecLogGroup.Arn     # arn:aws:logs:<region>:<account>:log-group:/aws/lambda/codemas-exec:*
+
+  ExecFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ExecLogGroup
+    Properties:
+      FunctionName: codemas-exec
+      Description: Grades one CodeMas submission per SQS message (claim -> sandbox -> complete over HTTPS, per-job token)
+      Runtime: python3.12
+      Handler: handler.handler
+      Code: ../../build/exec
+      Role: !GetAtt ExecRole.Arn
+      Timeout: 90
+      MemorySize: 1024
+      Architectures: [arm64]            # Graviton. The seccomp egress filter is fail-soft and inactive on real Lambda (self-check egress_blocked=false: R1)
+      Layers: [!Ref NodeLayer]
+      Environment:
+        Variables:
+          CODEMAS_API_URL: !Ref CodemasApiUrl
+          # The python3.12 runtime's default PATH, pinned so sandbox.py's shutil.which('node')
+          # always finds the layer's /opt/bin/node.
+          PATH: /var/lang/bin:/usr/local/bin:/usr/bin/:/bin:/opt/bin
+
+  ExecTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt ExecQueue.Arn
+      FunctionName: !Ref ExecFunction
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      ScalingConfig:
+        MaximumConcurrency: 5
+
+  # Console indicator only (no SNS action; within the free 10 alarms): red when the DLQ holds anything.
+  DlqNotEmptyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: codemas-exec-dlq-not-empty
+      AlarmDescription: codemas-exec-dlq has messages - deliveries that failed 3 times. See deploy/aws/README.md.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ExecDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  RelayUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: codemas-relay
+      Policies:
+        - PolicyName: send-to-exec-queue
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage          # also authorizes SendMessageBatch
+                Resource: !GetAtt ExecQueue.Arn
+
+Outputs:
+  QueueUrl: { Value: !Ref ExecQueue }
+  DlqUrl: { Value: !Ref ExecDLQ }
+  FunctionName: { Value: !Ref ExecFunction }
+  RelayUserName: { Value: !Ref RelayUser }

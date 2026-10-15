@@ -1,6 +1,7 @@
-# One image for both Railway services:
+# One image for the Railway services:
 #   web    — default CMD (migrate + gunicorn)
 #   worker — start command overridden to `celery -A codemas worker -B`
+#   relay  — start command overridden to `python manage.py run_relay` (job pipeline, JOB_TRANSPORT=sqs)
 # Compilers/runtimes are here because run_local executes student code in the worker.
 FROM python:3.10-slim-bookworm
 
@@ -15,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN SECRET_KEY=collectstatic-only python manage.py collectstatic --noinput
 
-# gthread workers so the SSE submission stream doesn't pin a whole worker process
+# gthread: 2 processes x 8 threads, so one slow request (e.g. the Lambda's /complete/, which
+# sends the result email) holds a thread, not a whole worker. No long-lived streams any more.
 CMD python manage.py migrate --noinput && \
     gunicorn codemas.wsgi --bind 0.0.0.0:${PORT:-8000} --worker-class gthread --workers 2 --threads 8 --timeout 120

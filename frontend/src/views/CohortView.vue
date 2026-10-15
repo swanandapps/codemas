@@ -2,65 +2,71 @@
     <div class="page">
         <div class="page-header">
             <div>
-                <h1 class="page-title">Cohort Investigation</h1>
-                <p class="page-subtitle">Exam-level flag rates — click any cohort to investigate students and cheating rings</p>
+                <h1>Cohort investigation</h1>
+                <p class="page-subtitle">Flagged students per exam. Open a cohort to review students and similarity clusters.</p>
             </div>
         </div>
 
-        <div v-if="loading" class="loading">Loading cohorts…</div>
-        <div v-else-if="error" class="error-msg">{{ error }}</div>
 
-        <template v-else>
-            <div class="legend-row">
-                <span class="legend-item"><span class="dot green"></span> &lt;10% flag rate</span>
-                <span class="legend-item"><span class="dot amber"></span> 10–25%</span>
-                <span class="legend-item"><span class="dot red"></span> &gt;25% — investigate</span>
-            </div>
+        <div>
+            <div v-if="loading" class="loading">Loading cohorts…</div>
+            <div v-else-if="error" class="error-msg">{{ error }}</div>
 
-            <div v-if="cohorts.length === 0" class="empty-state">No exams with submissions yet.</div>
+            <template v-else>
+                <div class="legend-row">
+                    <span class="legend-item" :title="METRIC_HELP.flagged"><span class="dot green"></span> Under {{ FLAGGED_WATCH_PCT }}% flagged students</span>
+                    <span class="legend-item"><span class="dot amber"></span> {{ FLAGGED_WATCH_PCT }} to {{ FLAGGED_AT_RISK_PCT }}%</span>
+                    <span class="legend-item"><span class="dot red"></span> {{ FLAGGED_AT_RISK_PCT }}% or more, investigate</span>
+                </div>
 
-            <div v-else class="cohort-list">
-                <router-link
-                    v-for="c in cohorts"
-                    :key="c.exam_id"
-                    :to="`/dashboard/plagiarism/cohorts/${c.exam_id}`"
-                    class="cohort-card"
-                >
-                    <div class="cohort-left">
-                        <span :class="['health-dot', c.health]"></span>
-                        <div class="cohort-info">
-                            <div class="cohort-title">{{ c.exam_title }}</div>
-                            <div class="cohort-stats">
-                                {{ c.total_submissions }} students &bull;
-                                {{ c.flagged_students }} flagged &bull;
-                                {{ pct(c.flag_rate) }} flag rate
+                <div v-if="cohorts.length === 0" class="empty-state">No exams with submissions yet.</div>
+
+                <div v-else class="cohort-list">
+                    <router-link
+                        v-for="c in cohorts"
+                        :key="c.exam_id"
+                        :to="`/dashboard/plagiarism/cohorts/${c.exam_id}`"
+                        class="cohort-card"
+                    >
+                        <div class="cohort-left">
+                            <span :class="['health-dot', c.health]"></span>
+                            <div class="cohort-info">
+                                <div class="cohort-title">{{ c.exam_title }}</div>
+                                <div class="cohort-stats">
+                                    <span class="stat-item" :title="METRIC_HELP.took">{{ plural(c.took, 'student') }} took the exam</span>
+                                    <span class="stat-item">{{ plural(c.flagged_students, 'flagged student') }}</span>
+                                    <span class="stat-item" :title="METRIC_HELP.flagged">{{ formatPct(c.flagged_students_rate) }} flagged students</span>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="cohort-right">
-                        <span class="chip b-chip">{{ c.behavioural_count }} behavioural</span>
-                        <span class="chip s-chip">{{ c.similarity_count }} similarity</span>
-                        <span v-if="c.ring_count > 0" class="chip r-chip">{{ c.ring_count }} {{ c.ring_count === 1 ? 'ring' : 'rings' }}</span>
-                        <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                            <path d="M9 18l6-6-6-6"/>
-                        </svg>
-                    </div>
-                </router-link>
-            </div>
-        </template>
+                        <div class="cohort-right">
+                            <span class="chip b-chip">{{ plural(c.behavioural_count, 'behavioural flag') }}</span>
+                            <span class="chip s-chip">{{ plural(c.similarity_count, 'similarity flag') }}</span>
+                            <span v-if="c.ring_count > 0" class="chip r-chip">{{ plural(c.ring_count, 'similarity cluster') }}</span>
+                            <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <path d="M9 18l6-6-6-6"/>
+                            </svg>
+                        </div>
+                    </router-link>
+                </div>
+            </template>
+        </div>
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import api from '../api'
+import { formatPct, plural } from '../utils/format'
+import { METRIC_HELP, FLAGGED_WATCH_PCT, FLAGGED_AT_RISK_PCT } from '../utils/metrics'
 
 interface Cohort {
     exam_id: number
     exam_title: string
     total_submissions: number
+    took: number
     flagged_students: number
-    flag_rate: number
+    flagged_students_rate: number | null
     behavioural_count: number
     similarity_count: number
     ring_count: number
@@ -70,10 +76,6 @@ interface Cohort {
 const cohorts = ref<Cohort[]>([])
 const loading = ref(true)
 const error = ref('')
-
-function pct(rate: number): string {
-    return (rate * 100).toFixed(1) + '%'
-}
 
 async function load() {
     loading.value = true
@@ -92,23 +94,13 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 32px 24px;
-}
 .page-header { margin-bottom: 24px; }
-.page-title {
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--text);
-    margin: 0 0 4px;
-}
 .page-subtitle {
-    font-size: 13px;
-    color: var(--text-dim);
-    margin: 0;
+    font-size: 15px;
+    color: var(--text-muted);
+    margin: 4px 0 0;
 }
+
 
 .loading, .empty-state {
     text-align: center;
@@ -119,7 +111,7 @@ onMounted(load)
 .error-msg {
     text-align: center;
     padding: 48px;
-    color: var(--red);
+    color: var(--red-ink);
     font-size: 14px;
 }
 
@@ -136,8 +128,8 @@ onMounted(load)
     border-radius: 50%;
     flex-shrink: 0;
 }
-.dot.green  { background: #22c55e; }
-.dot.amber  { background: #f59e0b; }
+.dot.green  { background: var(--green); }
+.dot.amber  { background: var(--yellow); }
 .dot.red    { background: var(--red); }
 
 .cohort-list {
@@ -150,6 +142,8 @@ onMounted(load)
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
     padding: 16px 20px;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -160,8 +154,7 @@ onMounted(load)
     cursor: pointer;
 }
 .cohort-card:hover {
-    border-color: #6366f1;
-    box-shadow: 0 2px 12px rgba(99, 102, 241, 0.1);
+    border-color: var(--accent);
 }
 
 .cohort-left { display: flex; align-items: center; gap: 14px; }
@@ -171,9 +164,9 @@ onMounted(load)
     border-radius: 50%;
     flex-shrink: 0;
 }
-.health-dot.green  { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.15); }
-.health-dot.amber  { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.15); }
-.health-dot.red    { background: var(--red); box-shadow: 0 0 0 3px rgba(230,57,70,0.15); }
+.health-dot.green  { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
+.health-dot.amber  { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim); }
+.health-dot.red    { background: var(--red); box-shadow: 0 0 0 3px var(--red-dim); }
 
 .cohort-title {
     font-size: 15px;
@@ -182,21 +175,27 @@ onMounted(load)
     margin-bottom: 3px;
 }
 .cohort-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
     font-size: 12px;
     color: var(--text-dim);
 }
+.stat-item { white-space: nowrap; }
 
-.cohort-right { display: flex; align-items: center; gap: 8px; }
+.cohort-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .chip {
     font-size: 11px;
     font-weight: 600;
     padding: 3px 8px;
-    border-radius: 20px;
+    border-radius: var(--radius-pill);
+    white-space: nowrap;
 }
-.b-chip { background: rgba(124,58,237,0.15); color: #a78bfa; }
-.s-chip { background: rgba(245,158,11,0.15); color: #f59e0b; }
-.r-chip { background: rgba(230,57,70,0.15); color: var(--red); }
+/* Behavioural signal is a risk indicator, shown in amber like other medium-risk signals. */
+.b-chip { background: var(--yellow-dim); color: var(--amber-ink); }
+.s-chip { background: var(--surface2); color: var(--text-muted); }
+.r-chip { background: var(--red-dim); color: var(--red-ink); }
 
 .arrow-icon { color: var(--text-dim); flex-shrink: 0; margin-left: 4px; }
 </style>

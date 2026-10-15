@@ -19,3 +19,22 @@ media/
 cypress/screenshots/
 cypress/videos/
 *.pdf
+
+# agent workspaces (plans, ledgers, review packages)
+.superpowers/
+
+# AWS pipeline build output and the relay access key (deploy/aws/deploy.sh)
+/build/
+deploy/aws/.relay-credentials*
+
+# local-only: browser automation logs, interview prep, secrets, scratch
+.playwright-mcp/
+INTERVIEW*
+PRD.md
+.env.*
+!.env.example
+*.pem
+*.sqlite3
+.claude/
+.venv/
+*-venv/

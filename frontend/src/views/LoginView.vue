@@ -2,20 +2,21 @@
     <div class="login-page">
         <div class="login-card">
             <div class="brand">
-                <div class="logo">CM</div>
-                <span class="brand-name">Code<span class="brand-red">Mas</span></span>
+                <span class="brand-name">CodeMas</span>
             </div>
             <h2>Welcome back</h2>
             <p class="subtitle">Sign in to your account</p>
 
             <form @submit.prevent="handleLogin">
                 <div class="form-group">
-                    <input v-model="username" type="text" placeholder="Username" required />
-                    <input v-model="password" type="password" placeholder="Password" required />
+                    <label for="login-username">Username</label>
+                    <input id="login-username" v-model="username" type="text" required />
+                    <label for="login-password">Password</label>
+                    <input id="login-password" v-model="password" type="password" required />
                 </div>
                 <div v-if="error" class="error-msg">{{ error }}</div>
                 <button type="submit" class="submit-btn" :disabled="loading">
-                    {{ loading ? 'Signing in...' : 'Sign In' }}
+                    {{ loading ? 'Signing in...' : 'Sign in' }}
                 </button>
             </form>
 
@@ -45,7 +46,7 @@ async function handleLogin(): Promise<void> {
         if (authStore.isTrainer) {
             router.push('/dashboard')
         } else {
-            router.push('/exams')
+            router.push('/home')
         }
     } catch (e: any) {
         error.value = e.response?.data?.error || 'Login failed'
@@ -62,14 +63,18 @@ async function handleLogin(): Promise<void> {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
 }
 .login-card {
-    width: 400px;
+    width: 100%;
+    max-width: 400px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 40px;
     box-shadow: var(--shadow-lg);
+    box-sizing: border-box;
 }
 .brand {
     display: flex;
@@ -77,24 +82,17 @@ async function handleLogin(): Promise<void> {
     gap: 10px;
     margin-bottom: 32px;
 }
-.logo {
-    width: 36px;
-    height: 36px;
-    background: var(--red);
-    border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 800;
-    font-size: 13px;
-    color: white;
-}
 .brand-name {
+    font-family: var(--font-display);
     font-size: 18px;
     font-weight: 700;
     color: var(--text);
 }
-.brand-red { color: var(--red); }
+@media (max-width: 600px) {
+    .login-card {
+        padding: 28px 20px;
+    }
+}
 h2 {
     font-size: 22px;
     font-weight: 700;
@@ -109,30 +107,43 @@ h2 {
 .form-group {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 6px;
     margin-bottom: 20px;
 }
+.form-group label {
+    font-family: var(--font-display);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    margin-top: 10px;
+}
+.form-group label:first-child {
+    margin-top: 0;
+}
+.form-group input {
+    min-height: 40px;
+}
 .error-msg {
-    color: var(--red);
+    color: var(--red-ink);
     font-size: 13px;
     padding: 10px 14px;
     background: var(--red-dim);
-    border: 1px solid rgba(230,57,70,0.3);
+    border: 1px solid var(--red);
     border-radius: var(--radius-sm);
 }
 .submit-btn {
     width: 100%;
     padding: 12px;
-    background: var(--red);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-ink);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-display);
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
 }
-.submit-btn:hover:not(:disabled) { background: var(--red-hover); }
+.submit-btn:hover:not(:disabled) { background: var(--accent-hover); }
 .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .footer-link {
     text-align: center;
@@ -140,5 +151,5 @@ h2 {
     font-size: 13px;
     color: var(--text-dim);
 }
-.footer-link a { color: var(--red); }
+.footer-link a { color: var(--accent); }
 </style>

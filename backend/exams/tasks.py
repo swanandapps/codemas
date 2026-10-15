@@ -13,12 +13,14 @@ def auto_manage_exams():
     Deactivating triggers the pre_save signal on Exam which queues the
     plagiarism batch check — so auto-close and manual close behave identically.
     """
+    from django.db.models import Q
     from .models import Exam
 
     now = timezone.now()
 
-    # auto-open exams whose start_time has arrived
-    to_open = Exam.objects.filter(is_active=False, start_time__lte=now, end_time__gt=now)
+    # auto-open exams whose start_time has arrived (no end_time = open until closed)
+    to_open = Exam.objects.filter(Q(end_time__isnull=True) | Q(end_time__gt=now),
+                                  is_active=False, start_time__lte=now)
     for exam in to_open:
         exam.is_active = True
         exam.save()

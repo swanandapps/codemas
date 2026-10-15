@@ -28,7 +28,7 @@ def notify_exam_open(exam) -> None:
             f'Hi,\n\n'
             f'The exam "{exam.title}" is now open.\n'
             f'Duration: {exam.duration_minutes} minutes.\n\n'
-            f'Log in at http://localhost:5173/exams to start.\n\n'
+            f'Log in at {settings.FRONTEND_URL}/exams to start.\n\n'
             f'Good luck!'
         ),
         to=emails,
@@ -46,7 +46,7 @@ def notify_result_ready(submission) -> None:
             f'Hi {submission.student.username},\n\n'
             f'Your attempt #{submission.attempt_number} for '
             f'"{submission.question.title}" has {status_text}.\n\n'
-            f'View your results at http://localhost:5173/results'
+            f'View your results at {settings.FRONTEND_URL}/results'
         ),
         to=[email],
     )
@@ -65,7 +65,7 @@ def notify_plagiarism_flagged(flag) -> None:
             f'A new plagiarism flag has been created.\n\n'
             f'Students: {flag.submission_1.student.username} vs {flag.submission_2.student.username}\n'
             f'Similarity: {flag.similarity_score * 100:.1f}%\n\n'
-            f'Review at http://localhost:5173/dashboard/plagiarism'
+            f'Review it in the exam case file: {settings.FRONTEND_URL}/dashboard/plagiarism/cohorts/{flag.submission_1.exam_id}'
         ),
         to=list(emails),
     )

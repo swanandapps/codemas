@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>CodeMas — Submission Flow</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
@@ -303,7 +304,61 @@
   }
   .pattern-why { font-size: 12px; color: #475569; line-height: 1.6; }
 
+  /* ── job pipeline actors (added with the outbox → relay → SQS → Lambda flow) ── */
+  :root { --relay: #38bdf8; --sqs: #f59e0b; --lambda: #e63946; }
+  .actor-relay  { border-color: var(--relay);  background: rgba(56,189,248,0.08);  color: var(--relay);  }
+  .actor-sqs    { border-color: var(--sqs);    background: rgba(245,158,11,0.08);  color: var(--sqs);    }
+  .actor-lambda { border-color: var(--lambda); background: rgba(230,57,70,0.08);   color: var(--lambda); }
+  .s-relay  .step-num  { background: rgba(56,189,248,0.15);  color: var(--relay);  border: 1.5px solid var(--relay);  }
+  .s-relay  .step-line { background: rgba(56,189,248,0.2);   }
+  .s-relay  .actor-tag { background: rgba(56,189,248,0.15);  color: var(--relay);  }
+  .s-relay  .code-block{ border-left-color: var(--relay);  }
+  .s-sqs    .step-num  { background: rgba(245,158,11,0.15);  color: var(--sqs);    border: 1.5px solid var(--sqs);    }
+  .s-sqs    .step-line { background: rgba(245,158,11,0.2);   }
+  .s-sqs    .actor-tag { background: rgba(245,158,11,0.15);  color: var(--sqs);    }
+  .s-sqs    .code-block{ border-left-color: var(--sqs);    }
+  .s-lambda .step-num  { background: rgba(230,57,70,0.15);   color: var(--lambda); border: 1.5px solid var(--lambda); }
+  .s-lambda .step-line { background: rgba(230,57,70,0.2);    }
+  .s-lambda .actor-tag { background: rgba(230,57,70,0.15);   color: var(--lambda); }
+  .s-lambda .code-block{ border-left-color: var(--lambda); }
+  .step-desc code, .info-table code, .note-box code { font-family: 'JetBrains Mono', monospace; font-size: 0.92em; color: #cbd5e1; }
+  .header .status-pill {
+    display: inline-block; margin-top: 12px; padding: 4px 14px; border-radius: 999px;
+    border: 1px solid #2a3045; background: #151a27; font-size: 12px; color: #94a3b8;
+  }
+  .header .status-pill b { color: #34d399; }
+  .info-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .info-table th { text-align: left; padding: 8px 12px; color: #64748b; font-weight: 600; border-bottom: 1px solid #2a3045; }
+  .info-table td { padding: 10px 12px; color: #94a3b8; border-bottom: 1px solid #1e2538; vertical-align: top; }
+  .info-table td:first-child { color: #f1f5f9; font-weight: 600; white-space: nowrap; }
+  .info-table tr:last-child td { border-bottom: none; }
+  .note-box {
+    margin-top: 16px; padding: 12px 14px; background: #0f1117; border: 1px solid #1e2538;
+    border-left: 3px solid; border-radius: 6px; font-size: 12px; color: #94a3b8;
+  }
   /* print */
+  /* narrow screens: actor grid and tables scroll inside their own box, never the page */
+  .actors-scroll { overflow-x: auto; margin-bottom: 40px; }
+  .actors-scroll .actors-row { margin-bottom: 0; }
+  .x-scroll { overflow-x: auto; }
+  .step { grid-template-columns: 40px minmax(0, 1fr); }
+  .step-body { min-width: 0; }
+  @media (max-width: 720px) {
+    body { padding: 32px 16px; }
+    .step { gap: 0 12px; }
+    table { display: block; overflow-x: auto; }
+    [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+    .model-card { min-width: 0; max-width: 100% !important; flex-basis: 100%; }
+    .field-row { flex-wrap: wrap; }
+    .field-name, .field-note { white-space: normal; overflow-wrap: anywhere; }
+    [style*="font-family:'JetBrains Mono'"] { overflow-x: auto; }
+    .actors-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pattern-grid { grid-template-columns: minmax(0, 1fr); }
+    .step-header { flex-wrap: wrap; }
+    .divider-label { white-space: normal; text-align: center; }
+    .info-table td:first-child { white-space: normal; }
+  }
+
   @media print {
     body { background: #fff; color: #0f172a; padding: 24px; }
     .actor-card, .step-body, .code-block { background: #f8fafc !important; }
@@ -319,45 +374,46 @@
 <div class="header">
   <h1>CodeMas — Submission Execution Flow</h1>
   <p>All actors, their roles, and the exact code that runs at each step</p>
+  <p class="status-pill"><b>Live since 2026-10-05:</b> SQS and Lambda in production · local transport in dev · Python and JavaScript on the job pipeline; C++ and Java still on Celery</p>
 </div>
 
 <!-- LEGEND -->
 <div class="legend">
   <div class="legend-item"><div class="dot" style="background:var(--browser)"></div>Browser</div>
   <div class="legend-item"><div class="dot" style="background:var(--django)"></div>Django</div>
-  <div class="legend-item"><div class="dot" style="background:var(--redis)"></div>Redis</div>
-  <div class="legend-item"><div class="dot" style="background:var(--celery)"></div>Celery Worker</div>
-  <div class="legend-item"><div class="dot" style="background:var(--docker)"></div>Docker / Lambda</div>
   <div class="legend-item"><div class="dot" style="background:var(--postgres)"></div>Postgres</div>
+  <div class="legend-item"><div class="dot" style="background:var(--relay)"></div>Relay</div>
+  <div class="legend-item"><div class="dot" style="background:var(--sqs)"></div>SQS (or local thread pool)</div>
+  <div class="legend-item"><div class="dot" style="background:var(--lambda)"></div>Lambda codemas-exec</div>
 </div>
 
 <!-- ACTORS -->
-<div class="actors-row">
+<div class="actors-scroll"><div class="actors-row">
   <div class="actor-card actor-browser">
     <div class="actor-name">Browser</div>
-    <div class="actor-role">Student UI. Sends code. Opens SSE stream. Shows result.</div>
+    <div class="actor-role">Student UI. Sends code. Polls the status endpoint. Shows result.</div>
   </div>
   <div class="actor-card actor-django">
     <div class="actor-name">Django</div>
-    <div class="actor-role">HTTP server. Validates input. Enforces rules. Coordinates.</div>
-  </div>
-  <div class="actor-card actor-redis">
-    <div class="actor-name">Redis</div>
-    <div class="actor-role">Speed layer. Job queue (Celery) + Pub/Sub (result notify).</div>
-  </div>
-  <div class="actor-card actor-celery">
-    <div class="actor-name">Celery</div>
-    <div class="actor-role">Background worker. Picks jobs. Runs execution. Publishes result.</div>
-  </div>
-  <div class="actor-card actor-docker">
-    <div class="actor-name">Docker</div>
-    <div class="actor-role">Isolated sandbox. Runs untrusted student code safely.</div>
+    <div class="actor-role">API + internal API (per-job token). Enforces attempts. Decides pass/fail.</div>
   </div>
   <div class="actor-card actor-postgres">
     <div class="actor-name">Postgres</div>
-    <div class="actor-role">Permanent truth. Stores all submissions, results and flags.</div>
+    <div class="actor-role">Single source of truth. Submissions, results, and the jobs_job outbox.</div>
   </div>
-</div>
+  <div class="actor-card actor-relay">
+    <div class="actor-name">Relay</div>
+    <div class="actor-role">manage.py run_relay. Publishes pending jobs. Sweeps stuck ones.</div>
+  </div>
+  <div class="actor-card actor-sqs">
+    <div class="actor-name">SQS</div>
+    <div class="actor-role">codemas-exec queue + DLQ. Carries only the job id. Local: a thread pool.</div>
+  </div>
+  <div class="actor-card actor-lambda">
+    <div class="actor-name">Lambda</div>
+    <div class="actor-role">codemas-exec. Claims, runs tests in a sandbox, completes. No DB access.</div>
+  </div>
+</div></div>
 
 <div class="divider"><div class="divider-line"></div><div class="divider-label">Flow begins</div><div class="divider-line"></div></div>
 
@@ -375,12 +431,13 @@
         <span class="actor-tag">Browser</span>
         <span class="step-title">Student submits code</span>
       </div>
-      <p class="step-desc">Student hits Submit. Browser sends a POST request with the question ID, code, and language.</p>
+      <p class="step-desc">Student hits Submit. The browser POSTs the question ID, code and language, plus the behavioural signals used later by plagiarism scoring.</p>
       <div class="code-block"><span class="cm">// ExamTakeView.vue — frontend</span>
-<span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">api</span>.<span class="fn">post</span>(<span class="str">'/submissions/'</span>, {
+<span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">api</span>.<span class="fn">post</span>(<span class="str">'/submissions/create/'</span>, {
   question: questionId,
   code: editorCode,
   language: <span class="str">'python'</span>,
+  <span class="cm">// + had_paste_event, paste_char_count, tab_switch_count, …</span>
 })</div>
     </div>
   </div>
@@ -396,8 +453,8 @@
         <span class="actor-tag">Django</span>
         <span class="step-title">Validate input &amp; fetch question</span>
       </div>
-      <p class="step-desc">Django receives the request. Checks the question exists. Validates the serializer fields.</p>
-      <div class="code-block"><span class="cm"># submissions/views.py</span>
+      <p class="step-desc">Django checks the question exists and validates the serializer fields. Nothing is written yet.</p>
+      <div class="code-block"><span class="cm"># submissions/views.py — SubmissionCreateView</span>
 question = <span class="cls">Question</span>.objects.<span class="fn">filter</span>(pk=question_id).<span class="fn">first</span>()
 <span class="kw">if not</span> question:
     <span class="kw">return</span> <span class="cls">Response</span>({<span class="str">'error'</span>: <span class="str">'Question not found'</span>}, status=<span class="num">404</span>)
@@ -417,317 +474,188 @@ serializer = <span class="cls">SubmissionCreateSerializer</span>(data=request.da
     <div class="step-body">
       <div class="step-header">
         <span class="actor-tag">Postgres</span>
-        <span class="step-title">Count existing attempts — enforce policy limit</span>
+        <span class="step-title">One transaction: lock, count attempts, write submission + outbox job</span>
       </div>
-      <p class="step-desc">Django queries Postgres to count how many submissions this student has already made for this question. The limit comes from PlagiarismPolicy — a trainer-configurable singleton. If at or over the limit, the request is rejected before any row is written.</p>
+      <p class="step-desc">The student's User row is locked. A second submit from the same student waits here until the first commits, then counts it: it becomes the next attempt, or gets 403 at the limit. Submissions that ended in <strong>error</strong> (a dead job, or a question with no tests) don't count against the limit. The submission and its job row are committed together or not at all. The request never touches a queue. C++ and Java skip the job row and go to the legacy Celery task after commit.</p>
       <div class="code-block"><span class="cm"># submissions/views.py</span>
-max_attempts = <span class="cls">PlagiarismPolicy</span>.<span class="fn">get</span>().max_attempts
-
-attempt_number = <span class="cls">Submission</span>.objects.<span class="fn">filter</span>(
-    student=request.user, question=question
-).<span class="fn">count</span>() + <span class="num">1</span>
-
-<span class="kw">if</span> attempt_number > max_attempts:
-    <span class="kw">return</span> <span class="cls">Response</span>({<span class="str">'error'</span>: <span class="str">'Max attempts reached'</span>}, status=<span class="num">403</span>)
-
-<span class="cm"># e.g. student has 1 existing row → attempt_number = 2</span>
-<span class="cm"># if max_attempts = 3, this is allowed; 4 would be rejected</span></div>
+<span class="kw">with</span> transaction.<span class="fn">atomic</span>():
+    <span class="cls">User</span>.objects.<span class="fn">select_for_update</span>().<span class="fn">get</span>(pk=request.user.pk)
+    mine = <span class="cls">Submission</span>.objects.<span class="fn">filter</span>(student=request.user, question=question)
+    <span class="kw">if</span> mine.<span class="fn">exclude</span>(status=<span class="str">'error'</span>).<span class="fn">count</span>() >= max_attempts:
+        <span class="kw">return</span> <span class="cls">Response</span>({<span class="str">'error'</span>: <span class="str">'Max attempts reached'</span>}, status=<span class="num">403</span>)
+    attempt_number = (mine.<span class="fn">aggregate</span>(m=<span class="cls">Max</span>(<span class="str">'attempt_number'</span>))[<span class="str">'m'</span>] <span class="kw">or</span> <span class="num">0</span>) + <span class="num">1</span>
+    submission = serializer.<span class="fn">save</span>(..., attempt_number=attempt_number)
+    <span class="kw">if</span> submission.language <span class="kw">in</span> settings.PIPELINE_LANGUAGES:   <span class="cm"># python, javascript</span>
+        <span class="fn">enqueue</span>(<span class="cls">Job</span>.KIND_EXECUTE, submission.id)          <span class="cm"># jobs_job row, status 'pending'</span>
+    <span class="kw">else</span>:
+        transaction.<span class="fn">on_commit</span>(<span class="kw">lambda</span>: execute_submission.<span class="fn">delay</span>(submission.id))
+<span class="cm"># a concurrent submit waits on the lock above, then counts this one (next attempt, or 403 at the limit)</span>
+<span class="cm"># unique (student, question, attempt_number) is the backstop for writers outside the lock → 409</span></div>
     </div>
   </div>
 
   <!-- 4 -->
-  <div class="step s-postgres">
+  <div class="step s-browser">
     <div class="step-spine">
       <div class="step-num">4</div>
       <div class="step-line"></div>
     </div>
     <div class="step-body">
       <div class="step-header">
-        <span class="actor-tag">Postgres</span>
-        <span class="step-title">Write submission row — status: pending</span>
+        <span class="actor-tag">Browser</span>
+        <span class="step-title">Receive 201 — start polling the status endpoint</span>
       </div>
-      <p class="step-desc">Django writes the submission to Postgres as <strong>pending</strong>. This is the permanent record. attempt_number is the value calculated from the Postgres count in step 3.</p>
-      <div class="code-block"><span class="cm"># submissions/views.py</span>
-submission = serializer.<span class="fn">save</span>(
-    student=request.user,
-    exam=question.exam,
-    attempt_number=attempt_number,
-    ip_address=request.META.<span class="fn">get</span>(<span class="str">'REMOTE_ADDR'</span>),
-)
+      <p class="step-desc">Django returns 201 at once. The browser polls <code>/status/</code>: immediately, then every 1 s for 5 polls, 2 s for 2, then every 3 s; after 2 minutes, every 10 s. The submission ID is kept per question in sessionStorage, so polling resumes after a refresh. The same endpoint serves the legacy Celery path (<code>"job": null</code>).</p>
+      <div class="code-block"><span class="cm">// ExamTakeView.vue</span>
+<span class="kw">const</span> POLL_DELAYS_MS = [<span class="num">1000</span>, <span class="num">1000</span>, <span class="num">1000</span>, <span class="num">1000</span>, <span class="num">1000</span>, <span class="num">2000</span>, <span class="num">2000</span>, <span class="num">3000</span>]
+<span class="kw">const</span> SLOW_POLL_AFTER_MS = <span class="num">120000</span>, SLOW_POLL_MS = <span class="num">10000</span>
 
-<span class="cm"># Postgres row after this step:</span>
-<span class="cm"># id=42, status='pending', student_id=1, question_id=7, attempt_number=2</span></div>
+<span class="kw">const</span> { data } = <span class="kw">await</span> api.<span class="fn">get</span>(<span class="str">`/submissions/${id}/status/`</span>)
+<span class="cm">// { id, status, results_ready, job: { status, attempt, queued_at, started_at, finished_at } }</span></div>
     </div>
   </div>
 
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Relay publishes the outbox</div><div class="divider-line"></div></div>
+
   <!-- 5 -->
-  <div class="step s-django">
+  <div class="step s-relay">
     <div class="step-spine">
       <div class="step-num">5</div>
       <div class="step-line"></div>
     </div>
     <div class="step-body">
       <div class="step-header">
-        <span class="actor-tag">Django</span>
-        <span class="step-title">Push execution job to Celery queue via Redis LPUSH</span>
+        <span class="actor-tag">Relay</span>
+        <span class="step-title">Pick up pending jobs with SKIP LOCKED, publish, mark queued</span>
       </div>
-      <p class="step-desc">.delay() does NOT run the function. It serializes the task name + args to JSON and does LPUSH on the Redis "celery" list. Only the execution job is pushed here — behavioural analysis runs post-exam alongside Phase 2, not per-submission.</p>
-      <div class="code-block"><span class="cm"># submissions/views.py</span>
-<span class="fn">execute_submission</span>.<span class="fn">delay</span>(submission.id)
+      <p class="step-desc">Every 0.5 s the relay locks up to 50 pending jobs, oldest first. SKIP LOCKED lets several relays run without taking the same rows. A job becomes <strong>queued</strong> only if the transport accepted it; anything else stays pending, with the error in <code>last_error</code>, for the next tick. A crash between sending and marking can publish a job twice, which is harmless because claiming is idempotent.</p>
+      <div class="code-block"><span class="cm"># jobs/relay.py — tick()</span>
+jobs = <span class="fn">list</span>(<span class="cls">Job</span>.objects.<span class="fn">select_for_update</span>(skip_locked=<span class="cls">True</span>)
+            .<span class="fn">filter</span>(status=<span class="str">'pending'</span>).<span class="fn">order_by</span>(<span class="str">'created_at'</span>)[:<span class="num">50</span>])
+outcome = transport.<span class="fn">publish_many</span>(jobs)     <span class="cm"># {job_id: None | error}</span>
+<span class="kw">for</span> job <span class="kw">in</span> jobs:
+    <span class="kw">if</span> outcome.<span class="fn">get</span>(<span class="fn">str</span>(job.id)) <span class="kw">is</span> <span class="cls">None</span>:
+        <span class="cls">Job</span>.objects.<span class="fn">filter</span>(pk=job.pk).<span class="fn">update</span>(status=<span class="str">'queued'</span>, published_at=now)
 
-<span class="cm"># What .delay() actually does internally:</span>
-<span class="cm"># LPUSH celery '{"task":"execution.tasks.execute_submission","args":[42]}'</span>
-
-<span class="cm"># Redis queue after this step:</span>
-<span class="cm"># celery → [ execute(42) ]</span></div>
+<span class="cm"># once a minute: sweep_stuck() — requeue lost messages / expired leases, mark dead at 3 attempts</span></div>
     </div>
   </div>
 
   <!-- 6 -->
-  <div class="step s-browser">
+  <div class="step s-sqs">
     <div class="step-spine">
       <div class="step-num">6</div>
       <div class="step-line"></div>
     </div>
     <div class="step-body">
       <div class="step-header">
-        <span class="actor-tag">Browser</span>
-        <span class="step-title">Receive 201 response — open SSE stream</span>
+        <span class="actor-tag">Transport</span>
+        <span class="step-title">sqs: send the job id to codemas-exec · local: hand it to a thread pool</span>
       </div>
-      <p class="step-desc">Django immediately returns 201 with status=pending. The browser then opens an SSE (Server-Sent Events) connection to stream the result when it's ready. This is a long-lived HTTP connection — not polling.</p>
-      <div class="code-block"><span class="cm">// Browser receives:</span>
-{ id: <span class="num">42</span>, status: <span class="str">'pending'</span>, ... }
+      <p class="step-desc">The message is only the job id, the kind and a per-job token, <code>HMAC-SHA256(JOB_SIGNING_SECRET, "job:" + job_id)</code>, minted by the relay. No code, no test answers, no secret. <strong>sqs</strong> sends 10 per <code>send_message_batch</code> call with short botocore timeouts, and SQS triggers the Lambda. <strong>local</strong> (built and used today) runs the real <code>lambda/exec/handler.py</code> in a thread pool inside the relay, and redelivers a failed delivery after 2 s and 5 s, like SQS would. An unknown <code>JOB_TRANSPORT</code> raises an error instead of falling back.</p>
+      <div class="code-block"><span class="cm"># jobs/transports.py</span>
+body = {<span class="str">"job_id"</span>: <span class="str">"7f3c…"</span>, <span class="str">"kind"</span>: <span class="str">"execute_submission"</span>, <span class="str">"token"</span>: <span class="fn">job_token</span>(job.id)}
 
-<span class="cm">// Then immediately opens SSE stream:</span>
-<span class="kw">const</span> es = <span class="kw">new</span> <span class="cls">EventSource</span>(<span class="str">`/api/submissions/42/stream?token=...`</span>)
-es.<span class="fn">onmessage</span> = (e) => {
-  <span class="kw">const</span> data = <span class="cls">JSON</span>.<span class="fn">parse</span>(e.data)
-  <span class="kw">if</span> (data.status === <span class="str">'passed'</span> || data.status === <span class="str">'failed'</span>) {
-    es.<span class="fn">close</span>()
-    <span class="fn">showResult</span>(data.status)
-  }
-}</div>
+<span class="cm"># SqsTransport</span>
+client.<span class="fn">send_message_batch</span>(QueueUrl=JOB_QUEUE_URL, Entries=[{
+    <span class="str">'Id'</span>: job_id, <span class="str">'MessageBody'</span>: json.<span class="fn">dumps</span>(body),
+    <span class="str">'MessageAttributes'</span>: {<span class="str">'job_id'</span>: …, <span class="str">'language'</span>: …}}, …])   <span class="cm"># ≤ 10 per call</span>
+
+<span class="cm"># LocalTransport.publish</span>
+event = {<span class="str">'Records'</span>: [{<span class="str">'messageId'</span>: job_id, <span class="str">'body'</span>: json.<span class="fn">dumps</span>(body)}]}
+<span class="kw">self</span>.pool.<span class="fn">submit</span>(<span class="kw">self</span>._deliver, event)
+<span class="cm"># _deliver: handler.handler(event, None); if batchItemFailures, deliver again after 2 s, then 5 s</span></div>
     </div>
   </div>
 
+<div class="divider"><div class="divider-line"></div><div class="divider-label">Executor (the same handler code locally and on Lambda)</div><div class="divider-line"></div></div>
+
   <!-- 7 -->
-  <div class="step s-redis">
+  <div class="step s-lambda">
     <div class="step-spine">
       <div class="step-num">7</div>
       <div class="step-line"></div>
     </div>
     <div class="step-body">
       <div class="step-header">
-        <span class="actor-tag">Redis</span>
-        <span class="step-title">Django subscribes to pub/sub channel for this submission</span>
+        <span class="actor-tag">Lambda</span>
+        <span class="step-title">Claim the job from Django (job token) — lease, token, payload</span>
       </div>
-      <p class="step-desc">The SSE endpoint in Django subscribes to a Redis pub/sub channel named "submission:42". It then sends "waiting" to the browser and blocks — waiting for Celery to publish on that channel.</p>
-      <div class="code-block"><span class="cm"># submissions/sse.py</span>
-<span class="kw">def</span> <span class="fn">event_stream</span>():
-    r = redis.<span class="cls">Redis</span>.<span class="fn">from_url</span>(os.environ.<span class="fn">get</span>(<span class="str">'REDIS_URL'</span>))
-    pubsub = r.<span class="fn">pubsub</span>()
-    channel = <span class="str">f"submission:{submission_id}"</span>  <span class="cm"># "submission:42"</span>
-    pubsub.<span class="fn">subscribe</span>(channel)
+      <p class="step-desc">The handler holds no database credentials, no shared secret and no answers. It sends back the token from the message; Django recomputes it and answers 401 if it doesn't match (a token works only for its own job). One locked read decides the outcome: a finished job gets 409 <code>done</code> (acknowledged), a live lease gets 409 <code>busy</code> (retried later), a job already at 3 attempts becomes <code>dead</code> (410) and its submission <code>error</code>. Otherwise the job becomes <strong>running</strong> with a new token and a 150 s lease (longer than the 90 s function timeout), and <code>attempt</code> goes up by 1.</p>
+      <div class="code-block"><span class="cm"># lambda/exec/handler.py</span>
+status, job = <span class="fn">_post</span>(<span class="str">'/internal/jobs/claim/'</span>, {<span class="str">'job_id'</span>: job_id, <span class="str">'token'</span>: token})
+<span class="cm"># no signature headers; Django: hmac.compare_digest(job_token(job_id), token) else 401</span>
 
-    <span class="kw">yield</span> <span class="str">f"data: {json.dumps({'status': 'waiting'})}\n\n"</span>
-
-    <span class="kw">for</span> message <span class="kw">in</span> pubsub.<span class="fn">listen</span>():     <span class="cm"># ← blocks here, sleeping</span>
-        <span class="kw">if</span> message[<span class="str">'type'</span>] == <span class="str">'message'</span>:
-            <span class="kw">yield</span> <span class="str">f"data: {message['data'].decode()}\n\n"</span>
-            <span class="kw">break</span>                          <span class="cm"># one result, done</span>
-
-    pubsub.<span class="fn">unsubscribe</span>(channel)</div>
+<span class="cm"># Django → 200</span>
+{ <span class="str">"lease_token"</span>: <span class="str">"c91e…"</span>, <span class="str">"submission_id"</span>: <span class="num">42</span>, <span class="str">"language"</span>: <span class="str">"python"</span>, <span class="str">"code"</span>: <span class="str">"..."</span>,
+  <span class="str">"tests"</span>: [{ <span class="str">"id"</span>: <span class="num">301</span>, <span class="str">"input"</span>: <span class="str">"..."</span> }, …],   <span class="cm"># no expected outputs: they never leave Django</span>
+  <span class="str">"limits"</span>: { <span class="str">"timeout_s"</span>: <span class="num">10</span>, <span class="str">"python_memory_mb"</span>: <span class="num">256</span>, <span class="str">"node_heap_mb"</span>: <span class="num">192</span>, <span class="str">"output_kb"</span>: <span class="num">64</span> } }</div>
     </div>
   </div>
 
-<div class="divider"><div class="divider-line"></div><div class="divider-label">Celery worker wakes up</div><div class="divider-line"></div></div>
-
   <!-- 8 -->
-  <div class="step s-celery">
+  <div class="step s-lambda">
     <div class="step-spine">
       <div class="step-num">8</div>
       <div class="step-line"></div>
     </div>
     <div class="step-body">
       <div class="step-header">
-        <span class="actor-tag">Celery Worker</span>
-        <span class="step-title">BRPOP unblocks — worker picks up the job</span>
+        <span class="actor-tag">Lambda</span>
+        <span class="step-title">Run each test in a sandboxed child process</span>
       </div>
-      <p class="step-desc">The Celery worker was sleeping on BRPOP — a blocking Redis command that waits until a job arrives. The moment Django did LPUSH in step 5, Redis woke the worker up. The worker deserializes the JSON, looks up the function by name in its task registry, and calls it.</p>
-      <div class="code-block"><span class="cm"># This is inside Celery library code — not our code</span>
-<span class="cm"># celery/worker/consumer.py (simplified)</span>
-<span class="kw">while</span> <span class="cls">True</span>:
-    message = redis.<span class="fn">BRPOP</span>(<span class="str">"celery"</span>, timeout=<span class="num">0</span>)   <span class="cm"># blocks until job arrives</span>
-    task_name = message[<span class="str">"task"</span>]                   <span class="cm"># "execution.tasks.execute_submission"</span>
-    fn = task_registry[task_name]                  <span class="cm"># looks up @shared_task function</span>
-    fn(*message[<span class="str">"args"</span>])                          <span class="cm"># calls execute_submission(42)</span></div>
+      <p class="step-desc">Each test runs in a fresh child process with no shell, an empty environment, its own process group and rlimits. A 10 s wall-clock timeout kills the whole group, and output is capped at 64 KB. The Lambda holds no secret and no expected outputs for student code to find. Known limits, accepted: on real Lambda student code can reach the internet (Lambda refuses the seccomp filter) and can read the role's AWS credentials. On Lambda (or with <code>CODEMAS_EXEC_SCRUB=1</code>) the temp dir is wiped and leftover processes are killed between runs. After the first student timeout the remaining tests are marked "Not run". If the Lambda itself runs out of time first, or the grader throws, the handler calls <code>/fail/</code>: the job goes back to pending and the relay republishes it. That is never a failing grade.</p>
+      <div class="code-block"><span class="cm"># lambda/exec/sandbox.py — run()</span>
+cmd = [sys.executable, <span class="str">'-I'</span>, <span class="str">'main.py'</span>]                    <span class="cm"># or: node --max-old-space-size=192 main.js</span>
+proc = subprocess.<span class="fn">Popen</span>(cmd, cwd=workdir, env={}, start_new_session=<span class="cls">True</span>,
+                        preexec_fn=<span class="fn">_preexec</span>(language, limits))
+<span class="cm"># _preexec: RLIMIT_CPU 10 s · RLIMIT_FSIZE 1 MB · RLIMIT_AS 256 MB (Python) · RLIMIT_NPROC 32 (Linux)</span>
+proc.<span class="fn">wait</span>(timeout=<span class="num">10</span>)       <span class="cm"># then os.killpg(pid, SIGKILL), always</span>
+
+<span class="cm"># handler.py — per test result sent back (Django decides pass/fail)</span>
+{ <span class="str">"test_id"</span>: <span class="num">301</span>, <span class="str">"output"</span>: <span class="str">"2"</span>, <span class="str">"error"</span>: <span class="str">""</span>, <span class="str">"ms"</span>: <span class="num">41</span>, <span class="str">"timed_out"</span>: <span class="kw">false</span> }</div>
     </div>
   </div>
 
   <!-- 9 -->
-  <div class="step s-celery">
+  <div class="step s-postgres">
     <div class="step-spine">
       <div class="step-num">9</div>
       <div class="step-line"></div>
     </div>
     <div class="step-body">
       <div class="step-header">
-        <span class="actor-tag">Celery Worker</span>
-        <span class="step-title">Set status to running — publish to SSE stream</span>
+        <span class="actor-tag">Postgres</span>
+        <span class="step-title">Complete — Django grades and records, only if the token still owns the job</span>
       </div>
-      <p class="step-desc">Worker saves "running" to Postgres, then immediately publishes to the Redis pub/sub channel. Django's SSE endpoint is already subscribed — it receives this and forwards it to the browser, so the student sees a live "Running…" indicator before execution even finishes.</p>
-      <div class="code-block"><span class="cm"># execution/tasks.py</span>
-submission.status = <span class="str">'running'</span>
-submission.<span class="fn">save</span>()
-
-r = redis.<span class="cls">Redis</span>.<span class="fn">from_url</span>(os.environ.<span class="fn">get</span>(<span class="str">'REDIS_URL'</span>))
-r.<span class="fn">publish</span>(<span class="str">f"submission:{submission_id}"</span>, json.<span class="fn">dumps</span>({<span class="str">'status'</span>: <span class="str">'running'</span>}))
-
-<span class="cm"># SSE stream immediately forwards to browser:</span>
-<span class="cm"># data: {"status": "running"}</span></div>
+      <p class="step-desc">In one transaction Django checks the lease token, writes one Result row per test, sets the submission to passed or failed, and marks the job <strong>succeeded</strong>. The pass rule is the same as the legacy executor: <code>output.strip() == expected.strip()</code>. A stale token gets 409 and nothing is written. A question with no tests ends as <code>error</code>, never a pass. After commit, the same side effects as the legacy task run: normalise the code, notify, and queue the AI rubric and hint on Celery.</p>
+      <div class="code-block"><span class="cm"># jobs/services.py — complete()  →  jobs/execute.py — apply_result()</span>
+job = <span class="cls">Job</span>.objects.<span class="fn">select_for_update</span>().<span class="fn">get</span>(pk=job_id)
+<span class="kw">if</span> job.status != <span class="str">'running'</span> <span class="kw">or</span> <span class="fn">str</span>(job.lease_token) != <span class="fn">str</span>(lease_token):
+    <span class="kw">raise</span> <span class="cls">StaleLease</span>                                   <span class="cm"># → 409</span>
+<span class="cls">Result</span>.objects.<span class="fn">update_or_create</span>(submission=sub, test_case_id=r[<span class="str">'test_id'</span>], defaults={…})
+sub.status = <span class="str">'passed'</span> <span class="kw">if</span> all_passed <span class="kw">and not</span> missing <span class="kw">else</span> <span class="str">'failed'</span>
+job.status = <span class="str">'succeeded'</span>
+transaction.<span class="fn">on_commit</span>(<span class="kw">lambda</span>: <span class="fn">after_grading</span>(sub.id), robust=<span class="cls">True</span>)</div>
     </div>
   </div>
 
   <!-- 10 -->
-  <div class="step s-docker">
-    <div class="step-spine">
-      <div class="step-num">10</div>
-      <div class="step-line"></div>
-    </div>
-    <div class="step-body">
-      <div class="step-header">
-        <span class="actor-tag">Docker / Lambda</span>
-        <span class="step-title">Run student code against each test case in isolation</span>
-      </div>
-      <p class="step-desc">For each test case, a Docker container is spun up with the student's code and test input. The container has no network, 128MB memory limit, and is destroyed after running. Output is compared against expected output.</p>
-      <div class="code-block"><span class="cm"># execution/tasks.py — run_in_docker()</span>
-<span class="kw">for</span> test_case <span class="kw">in</span> submission.question.test_cases.<span class="fn">all</span>():
-    output, error, exec_time = <span class="fn">run_in_docker</span>(
-        code=submission.code,
-        language=submission.language,
-        input_data=test_case.input_data,
-    )
-    passed = (output.<span class="fn">strip</span>() == test_case.expected_output.<span class="fn">strip</span>())
-
-<span class="cm"># Inside run_in_docker:</span>
-result = client.containers.<span class="fn">run</span>(
-    <span class="str">'python:3.11-alpine'</span>,
-    [<span class="str">'python3'</span>, <span class="str">'-c'</span>, wrapped_code],
-    network_disabled=<span class="cls">True</span>,   <span class="cm"># no internet</span>
-    mem_limit=<span class="str">'128m'</span>,        <span class="cm"># memory cap</span>
-    remove=<span class="cls">True</span>,             <span class="cm"># auto-destroy container</span>
-)</div>
-    </div>
-  </div>
-
-  <!-- 11 -->
-  <div class="step s-postgres">
-    <div class="step-spine">
-      <div class="step-num">11</div>
-      <div class="step-line"></div>
-    </div>
-    <div class="step-body">
-      <div class="step-header">
-        <span class="actor-tag">Postgres</span>
-        <span class="step-title">Save Result rows, update submission status to passed/failed</span>
-      </div>
-      <p class="step-desc">One Result row is written per test case. Then the submission status is updated to passed (all tests passed) or failed.</p>
-      <div class="code-block"><span class="cm"># execution/tasks.py</span>
-    <span class="cls">Result</span>.objects.<span class="fn">create</span>(
-        submission=submission,
-        test_case=test_case,
-        passed=passed,
-        actual_output=output,
-        execution_time_ms=exec_time,
-        error_message=error,
-    )
-
-submission.status = <span class="str">'passed'</span> <span class="kw">if</span> all_passed <span class="kw">else</span> <span class="str">'failed'</span>
-submission.<span class="fn">save</span>()
-
-<span class="cm"># Postgres after this step:</span>
-<span class="cm"># submissions: id=42, status='passed'</span>
-<span class="cm"># results: 3 rows (one per test case)</span></div>
-    </div>
-  </div>
-
-  <!-- 12 -->
-  <div class="step s-redis">
-    <div class="step-spine">
-      <div class="step-num">12</div>
-      <div class="step-line"></div>
-    </div>
-    <div class="step-body">
-      <div class="step-header">
-        <span class="actor-tag">Redis</span>
-        <span class="step-title">Celery publishes result to pub/sub channel</span>
-      </div>
-      <p class="step-desc">Celery publishes the final status to the "submission:42" Redis channel. Any subscriber listening on that channel is immediately notified. Celery doesn't know or care who's listening.</p>
-      <div class="code-block"><span class="cm"># execution/tasks.py</span>
-r = redis.<span class="cls">Redis</span>.<span class="fn">from_url</span>(os.environ.<span class="fn">get</span>(<span class="str">'REDIS_URL'</span>))
-channel = <span class="str">f"submission:{submission_id}"</span>       <span class="cm"># "submission:42"</span>
-payload = json.<span class="fn">dumps</span>({<span class="str">'status'</span>: submission.status})
-r.<span class="fn">publish</span>(channel, payload)
-
-<span class="cm"># Redis PUBLISH command:</span>
-<span class="cm"># PUBLISH submission:42 '{"status": "passed"}'</span>
-<span class="cm"># → Redis immediately wakes everyone subscribed to this channel</span></div>
-    </div>
-  </div>
-
-  <!-- 13 -->
-  <div class="step s-django">
-    <div class="step-spine">
-      <div class="step-num">13</div>
-      <div class="step-line"></div>
-    </div>
-    <div class="step-body">
-      <div class="step-header">
-        <span class="actor-tag">Django</span>
-        <span class="step-title">SSE endpoint forwards each status — closes only on terminal</span>
-      </div>
-      <p class="step-desc">The SSE loop unblocks each time Celery publishes. It forwards every message to the browser and only closes the stream when the status is a terminal value — passed, failed, or error. Intermediate statuses like "running" flow through and the stream stays open.</p>
-      <div class="code-block"><span class="cm"># submissions/sse.py</span>
-terminal = {<span class="str">'passed'</span>, <span class="str">'failed'</span>, <span class="str">'error'</span>}
-<span class="kw">for</span> message <span class="kw">in</span> pubsub.<span class="fn">listen</span>():
-    <span class="kw">if</span> message[<span class="str">'type'</span>] == <span class="str">'message'</span>:
-        payload = message[<span class="str">'data'</span>].<span class="fn">decode</span>(<span class="str">'utf-8'</span>)
-        <span class="kw">yield</span> <span class="str">f"data: {payload}\n\n"</span>        <span class="cm"># forward to browser</span>
-        <span class="kw">if</span> json.<span class="fn">loads</span>(payload).<span class="fn">get</span>(<span class="str">'status'</span>) <span class="kw">in</span> terminal:
-            <span class="kw">break</span>                           <span class="cm"># terminal — close stream</span>
-
-pubsub.<span class="fn">unsubscribe</span>(channel)
-
-<span class="cm"># Messages forwarded in order:</span>
-<span class="cm"># data: {"status": "running"}   ← step 9 publish, stream stays open</span>
-<span class="cm"># data: {"status": "passed"}    ← step 12 publish, stream closes</span></div>
-    </div>
-  </div>
-
-  <!-- 14 -->
   <div class="step s-browser">
     <div class="step-spine">
-      <div class="step-num">14</div>
+      <div class="step-num">10</div>
     </div>
     <div class="step-body">
       <div class="step-header">
         <span class="actor-tag">Browser</span>
-        <span class="step-title">Receive result — show passed ✓ or failed ✗</span>
+        <span class="step-title">Next poll sees passed / failed — fetch per-test results</span>
       </div>
-      <p class="step-desc">The browser EventSource fires for every message. Intermediate statuses update the UI in real-time. When a terminal status arrives, the stream is closed and the final result is shown.</p>
-      <div class="code-block"><span class="cm">// Browser — EventSource handler fires for each message</span>
-es.<span class="fn">onmessage</span> = (e) => {
-  <span class="kw">const</span> data = <span class="cls">JSON</span>.<span class="fn">parse</span>(e.data)
-
-  <span class="cm">// ① status: "waiting"  → "Waiting in queue…"</span>
-  <span class="cm">// ② status: "running"  → "Running your code…" ← new</span>
-  <span class="cm">// ③ status: "passed"   → "✓ Passed"</span>
-  <span class="fn">updateStatusUI</span>(data.status)
-
-  <span class="kw">if</span> (data.status === <span class="str">'passed'</span> || data.status === <span class="str">'failed'</span> || data.status === <span class="str">'error'</span>) {
-    es.<span class="fn">close</span>()                        <span class="cm">// terminal — close SSE stream</span>
-  }
-}</div>
+      <p class="step-desc">The tracker moves Queue → Execute → Grade from the job status and never moves backwards. A retry shows "Retrying…"; a wait over 10 s shows "Taking longer than usual…". A dead job tells the student it couldn't be graded and doesn't count as an attempt.</p>
+      <div class="code-block"><span class="cm">// ExamTakeView.vue</span>
+<span class="kw">if</span> (data.status === <span class="str">'passed'</span> || data.status === <span class="str">'failed'</span>) {
+  <span class="kw">const</span> res = <span class="kw">await</span> api.<span class="fn">get</span>(<span class="str">`/results/${submissionId}/`</span>)   <span class="cm">// per-test breakdown</span>
+}
+<span class="cm">// job.status === 'dead' → "We couldn't grade this submission … doesn't count as an attempt"</span></div>
     </div>
   </div>
 
@@ -735,36 +663,36 @@ es.<span class="fn">onmessage</span> = (e) => {
 
 <div class="divider"><div class="divider-line"></div><div class="divider-label">Flow complete</div><div class="divider-line"></div></div>
 
-<!-- REDIS SUMMARY -->
+<!-- FAILURE SUMMARY -->
 <div style="margin-top:32px; background:#1a1f2e; border:1px solid #2a3045; border-radius:12px; padding:28px;">
-  <div style="font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:16px;">Redis — Two distinct uses in this flow</div>
-  <table style="width:100%;border-collapse:collapse;font-size:13px;">
-    <thead>
-      <tr style="border-bottom:1px solid #2a3045;">
-        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Use</th>
-        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Command</th>
-        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Key / Channel</th>
-        <th style="text-align:left;padding:8px 12px;color:#64748b;font-weight:600;">Purpose</th>
-      </tr>
-    </thead>
+  <div style="font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:16px;">When something goes wrong</div>
+  <table class="info-table">
+    <thead><tr><th>Situation</th><th>What happens</th></tr></thead>
     <tbody>
-      <tr style="border-bottom:1px solid #1e2538;">
-        <td style="padding:10px 12px;color:#f59e0b;font-weight:600;">Job queue</td>
-        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">LPUSH + BRPOP</td>
-        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">celery</td>
-        <td style="padding:10px 12px;color:#64748b;">Hand tasks to Celery worker without polling. Worker sleeps until a job arrives.</td>
-      </tr>
-      <tr>
-        <td style="padding:10px 12px;color:#f59e0b;font-weight:600;">Pub/Sub</td>
-        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">PUBLISH + SUBSCRIBE</td>
-        <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;">submission:42</td>
-        <td style="padding:10px 12px;color:#64748b;">Notify Django SSE endpoint the moment Celery finishes. Django pushes to browser.</td>
-      </tr>
+      <tr><td>Relay down</td><td>Jobs wait as <code>pending</code> and publish on the first tick after restart.</td></tr>
+      <tr><td>Queue unreachable</td><td>Publish fails; the job stays <code>pending</code> with <code>publish failed: …</code> in <code>last_error</code> and is retried every tick.</td></tr>
+      <tr><td>Grader error, or Lambda out of time before any student timeout</td><td>The handler calls <code>/fail/</code>: the job goes back to <code>pending</code> (the attempt still counts) and the relay republishes it on the next tick. The message is acknowledged.</td></tr>
+      <tr><td>Crash or Lambda timeout</td><td>SQS: the message reappears after the 540 s visibility timeout (about 9 minutes) and the expired lease is reclaimed with a new token. Local: redelivery after 2 s and 5 s, then the sweep requeues the expired lease.</td></tr>
+      <tr><td>Duplicate delivery</td><td>The second claim gets 409 <code>done</code> or <code>busy</code>. Only the lease holder can complete.</td></tr>
+      <tr><td>Three attempts used</td><td>The job becomes <code>dead</code> and the submission <code>error</code>, which doesn't count against the student's attempts.</td></tr>
+      <tr><td>Wrong answer, error or student timeout</td><td>A normal <code>succeeded</code> job with a failing grade. Never retried.</td></tr>
     </tbody>
   </table>
-  <div style="margin-top:16px;padding:12px 14px;background:#0f1117;border:1px solid #1e2538;border-left:3px solid #8b5cf6;border-radius:6px;font-size:12px;color:#64748b;font-family:'JetBrains Mono',monospace;">
-    <span style="color:#8b5cf6;font-weight:600;">Postgres</span> — attempt counting moved here (SELECT COUNT). Simpler, no Redis dependency, trainer-configurable limit via PlagiarismPolicy.max_attempts.
-  </div>
+  <div class="note-box" style="border-left-color:#f59e0b;"><span style="color:#fbbf24;font-weight:600;">codemas-exec-dlq</span> holds messages whose delivery wasn't acknowledged 3 times. Causes: crashes and timeouts; Django unreachable; a claim refused with 401, 404 or <code>busy</code>; a failed <code>/fail/</code> call; a <code>complete</code> answered with anything but 200 or 409; and claims skipped because less than 30 s of Lambda time was left. A job released through <code>/fail/</code> has its message acknowledged, so it dies in Postgres with no DLQ message.</div>
+</div>
+
+<!-- WHAT STAYS ON CELERY -->
+<div style="margin-top:20px; background:#1a1f2e; border:1px solid #2a3045; border-radius:12px; padding:28px;">
+  <div style="font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:16px;">What still runs on Celery + Redis</div>
+  <table class="info-table">
+    <thead><tr><th>Work</th><th>Why it hasn't moved</th></tr></thead>
+    <tbody>
+      <tr><td>C++ and Java execution</td><td>Needs a heavier executor image. Chosen per language by <code>PIPELINE_LANGUAGES</code>; the legacy task uses <code>run_local</code>, a dev-only subprocess executor.</td></tr>
+      <tr><td>AI rubric feedback and hints</td><td>Queued with <code>.delay()</code> after grading commits. Best-effort; never affects the grade.</td></tr>
+      <tr><td>Plagiarism (Phase 1 + 2) and Beat schedules</td><td>Run at exam close; unchanged by this pipeline.</td></tr>
+    </tbody>
+  </table>
+  <div class="note-box" style="border-left-color:#8b5cf6;"><span style="color:#8b5cf6;font-weight:600;">Rollback</span> — <code>PIPELINE_LANGUAGES=""</code> on the web service sends every language back to Celery, with no code change. In production: <code>railway variable set "PIPELINE_LANGUAGES=" -s backend --skip-deploys &amp;&amp; railway up -s backend --detach</code>. Set it empty, never delete it (unset defaults to python,javascript); a variable change without <code>--skip-deploys</code> redeploys the old GitHub commit.</div>
 </div>
 
 <div class="divider"><div class="divider-line"></div><div class="divider-label">Database Schema Reference</div><div class="divider-line"></div></div>
@@ -935,6 +863,31 @@ es.<span class="fn">onmessage</span> = (e) => {
     </div>
   </div>
 
+  <!-- jobs -->
+  <div class="app-section">
+    <div class="app-section-label" style="color:#38bdf8;">jobs<span></span></div>
+    <div class="models-grid">
+      <div class="model-card" style="border-top:2px solid #38bdf8;">
+        <div class="model-card-head">Job <span class="model-app-badge" style="background:rgba(56,189,248,0.15);color:#7dd3fc;">outbox · lease</span></div>
+        <div class="model-fields" style="display:grid;grid-template-columns:1fr 1fr;">
+          <div>
+            <div class="field-row"><span class="field-name">id</span><span class="ft ft-text">uuid</span><span class="field-note">the only thing a message carries</span></div>
+            <div class="field-row"><span class="field-name">kind</span><span class="ft ft-enum">enum</span><span class="field-note">execute_submission</span></div>
+            <div class="field-row"><span class="field-name">subject_id</span><span class="ft ft-int">int</span><span class="field-note">submission id</span></div>
+            <div class="field-row"><span class="field-name">status</span><span class="ft ft-enum">state machine</span><span class="field-note">pending · queued · running · succeeded · failed · dead</span></div>
+            <div class="field-row"><span class="field-name">attempt</span><span class="ft ft-int">int</span><span class="field-note">claims, max 3</span></div>
+          </div>
+          <div>
+            <div class="field-row"><span class="field-name">lease_token / lease_expires_at</span><span class="ft ft-text">uuid · datetime</span></div>
+            <div class="field-row"><span class="field-name">published_at / started_at / finished_at</span><span class="ft ft-text">datetime</span></div>
+            <div class="field-row"><span class="field-name">last_error</span><span class="ft ft-text">text</span><span class="field-note">operators</span></div>
+            <div class="field-row"><span class="field-name">(kind, subject_id) while active</span><span class="ft ft-uniq">partial unique</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- support -->
   <div class="app-section">
     <div class="app-section-label" style="color:#64748b;">support<span></span></div>
@@ -1100,7 +1053,7 @@ es.<span class="fn">onmessage</span> = (e) => {
   <div class="pattern-card">
     <div class="pattern-name"><span class="pattern-badge" style="background:rgba(99,102,241,0.15);color:#818cf8;">Status State Machine</span></div>
     <div class="pattern-example">pending → running → passed / failed / error</div>
-    <div class="pattern-why">CharField with choices stores current state. The Celery task enforces valid transitions in code. CharField (not an int) because string statuses are self-documenting in queries, the admin, and logs.</div>
+    <div class="pattern-why">CharField with choices stores current state. Transitions are made in code. For the job pipeline: claim sets running; complete sets passed / failed. <strong>error</strong> is set by a claim that finds the job out of attempts (dead), by the sweep when a lease expires at the attempt limit, and by complete on a question with no tests. An error submission never counts as an attempt. For C++ and Java, the Celery task sets the status. CharField (not an int) because string statuses are self-documenting in queries, the admin, and logs.</div>
   </div>
   <div class="pattern-card">
     <div class="pattern-name"><span class="pattern-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;">Audit Log</span></div>

@@ -2,26 +2,30 @@
     <div class="register-page">
         <div class="register-card">
             <div class="brand">
-                <div class="logo">CM</div>
-                <span class="brand-name">Code<span class="brand-red">Mas</span></span>
+                <span class="brand-name">CodeMas</span>
             </div>
             <h2>Create account</h2>
-            <p class="subtitle">Join the platform</p>
+            <p class="subtitle">Create a student account to take your exams.</p>
 
             <form @submit.prevent="handleRegister">
                 <div class="form-group">
-                    <input v-model="username" type="text" placeholder="Username" required />
-                    <input v-model="email" type="email" placeholder="Email" required />
-                    <input v-model="password" type="password" placeholder="Password" required />
-                    <select v-model="role">
+                    <label for="register-username">Username</label>
+                    <input id="register-username" v-model="username" type="text" required />
+                    <label for="register-email">Email</label>
+                    <input id="register-email" v-model="email" type="email" required />
+                    <label for="register-password">Password</label>
+                    <input id="register-password" v-model="password" type="password" required />
+                    <label for="register-role">Role</label>
+                    <select id="register-role" v-model="role">
                         <option value="student">Student</option>
                         <option value="trainer">Trainer</option>
                     </select>
-                    <input v-model="cohort" type="text" placeholder="Cohort (e.g. May 2026)" />
+                    <label for="register-cohort">Section</label>
+                    <input id="register-cohort" v-model="cohort" type="text" placeholder="e.g. Section A" />
                 </div>
                 <div v-if="error" class="error-msg">{{ error }}</div>
                 <button type="submit" class="submit-btn" :disabled="loading">
-                    {{ loading ? 'Creating account...' : 'Create Account' }}
+                    {{ loading ? 'Creating account...' : 'Create account' }}
                 </button>
             </form>
 
@@ -48,7 +52,6 @@ const loading = ref<boolean>(false)
 async function handleRegister(): Promise<void> {
     loading.value = true
     error.value = ''
-    console.log('hii')
     try {
         await api.post('/auth/register/', {
             username: username.value,
@@ -59,7 +62,16 @@ async function handleRegister(): Promise<void> {
         })
         router.push('/login')
     } catch (e: any) {
-        error.value = e.response?.data?.error || 'Registration failed'
+        const data = e.response?.data
+        // First field error (e.g. {username: ["already taken"]}) if there's no top-level message
+        let fieldMsg: string | undefined
+        if (data && typeof data === 'object') {
+            for (const v of Object.values(data)) {
+                const m = Array.isArray(v) ? v[0] : v
+                if (typeof m === 'string' && m) { fieldMsg = m; break }
+            }
+        }
+        error.value = data?.error || data?.detail || fieldMsg || 'Registration failed'
     } finally {
         loading.value = false
     }
@@ -73,14 +85,18 @@ async function handleRegister(): Promise<void> {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
 }
 .register-card {
-    width: 420px;
+    width: 100%;
+    max-width: 420px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 40px;
     box-shadow: var(--shadow-lg);
+    box-sizing: border-box;
 }
 .brand {
     display: flex;
@@ -88,24 +104,17 @@ async function handleRegister(): Promise<void> {
     gap: 10px;
     margin-bottom: 32px;
 }
-.logo {
-    width: 36px;
-    height: 36px;
-    background: var(--red);
-    border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 800;
-    font-size: 13px;
-    color: white;
-}
 .brand-name {
+    font-family: var(--font-display);
     font-size: 18px;
     font-weight: 700;
     color: var(--text);
 }
-.brand-red { color: var(--red); }
+@media (max-width: 600px) {
+    .register-card {
+        padding: 28px 20px;
+    }
+}
 h2 {
     font-size: 22px;
     font-weight: 700;
@@ -120,31 +129,45 @@ h2 {
 .form-group {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 6px;
     margin-bottom: 20px;
 }
+.form-group label {
+    font-family: var(--font-display);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    margin-top: 10px;
+}
+.form-group label:first-child {
+    margin-top: 0;
+}
+.form-group input,
+.form-group select {
+    min-height: 40px;
+}
 .error-msg {
-    color: var(--red);
+    color: var(--red-ink);
     font-size: 13px;
     padding: 10px 14px;
     background: var(--red-dim);
-    border: 1px solid rgba(230,57,70,0.3);
+    border: 1px solid var(--red);
     border-radius: var(--radius-sm);
     margin-bottom: 12px;
 }
 .submit-btn {
     width: 100%;
     padding: 12px;
-    background: var(--red);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-ink);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-display);
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
 }
-.submit-btn:hover:not(:disabled) { background: var(--red-hover); }
+.submit-btn:hover:not(:disabled) { background: var(--accent-hover); }
 .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .footer-link {
     text-align: center;
@@ -152,5 +175,5 @@ h2 {
     font-size: 13px;
     color: var(--text-dim);
 }
-.footer-link a { color: var(--red); }
+.footer-link a { color: var(--accent); }
 </style>

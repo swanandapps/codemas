@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from submissions.models import Submission
 from plagiarism.models import PlagiarismFlag
-from .models import RubricScore, AIHint, PlagiarismExplanation
+from .models import RubricScore, AIHint, PlagiarismExplanation, WeeklyRecommendation
 from .serializers import (
     RubricScoreSerializer, AIHintSerializer, PlagiarismExplanationSerializer,
 )
@@ -88,7 +88,8 @@ class ExamSummaryView(APIView):
 
     Returns the requesting student's AI summary for an exam, generating it on
     first request (synchronous, then cached). Trainers may pass ?student=<id>
-    to view a specific student's summary.
+    to view a specific student's summary. Until the student has submitted the
+    exam or it has ended, returns {'status': 'not_ready'} and writes nothing.
     """
     permission_classes = [IsAuthenticated]
 
@@ -97,7 +98,11 @@ class ExamSummaryView(APIView):
         if request.user.role == 'trainer':
             student_id = request.query_params.get('student', request.user.id)
 
-        from .tasks import generate_exam_summary
+        from exams.models import Exam
+        from .tasks import exam_summary_final_at, generate_exam_summary
+        exam = Exam.objects.filter(pk=exam_id).first()
+        if exam and exam_summary_final_at(student_id, exam) is None:
+            return Response({'status': 'not_ready'})
         summary = generate_exam_summary(student_id, exam_id)
         if not summary:
             return Response({'status': 'unavailable'})
@@ -107,6 +112,28 @@ class ExamSummaryView(APIView):
             'summary': summary.summary,
             'model_used': summary.model_used,
             'created_at': summary.created_at,
+        })
+
+
+class MyWeeklyRecommendationView(APIView):
+    """GET /api/ai/recommendation/me/
+
+    The requesting student's latest weekly recommendation, or 204 when none has
+    been written yet. Written by the Monday beat task, never on request.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from datetime import timedelta
+        rec = WeeklyRecommendation.objects.filter(student=request.user).first()  # newest week first
+        if not rec:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({
+            'headline': rec.headline,
+            'cards': rec.cards,
+            'week_start': rec.week_start,
+            'next_update': rec.week_start + timedelta(days=7),
+            'created_at': rec.created_at,
         })
 
 
@@ -126,7 +153,7 @@ class GenerateExamView(APIView):
         topic = (request.data.get('topic') or '').strip()
         if not topic:
             return Response({'error': 'topic is required'}, status=status.HTTP_400_BAD_REQUEST)
-        language = request.data.get('language', 'python')
+        language = request.data.get('language', 'javascript')
         num_questions = request.data.get('num_questions', 3)
         difficulty = request.data.get('difficulty', 'medium')
 
@@ -135,6 +162,8 @@ class GenerateExamView(APIView):
         try:
             draft = generate_exam_draft(topic, language, num_questions, difficulty)
         except LLMUnavailable as e:
-            return Response({'error': f'AI generation unavailable: {e}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            print(f'[AI] exam generation failed: {e}')  # provider detail stays in the logs, not the UI
+            return Response({'error': 'Exam generation is unavailable right now. Try again in a minute.'},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         return Response(draft)

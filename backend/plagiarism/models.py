@@ -14,6 +14,9 @@ class PlagiarismPolicy(models.Model):
 
     min_risk_score      = models.FloatField(default=0.20)
     similarity_threshold = models.FloatField(default=0.80)
+    # Phase 2 compares a student's code when their behavioural risk is at least this,
+    # or when 3+ signals fired (high confidence). Weights therefore decide who is compared.
+    compare_min_risk    = models.FloatField(default=0.35)
 
     easy_baseline_s     = models.IntegerField(default=90)
     medium_baseline_s   = models.IntegerField(default=240)
@@ -38,7 +41,7 @@ class PlagiarismPolicy(models.Model):
 
 POLICY_FIELDS = [
     'paste_weight', 'time_weight', 'tab_weight', 'submission_weight',
-    'min_risk_score', 'similarity_threshold',
+    'min_risk_score', 'similarity_threshold', 'compare_min_risk',
     'easy_baseline_s', 'medium_baseline_s', 'hard_baseline_s',
     'max_attempts',
 ]
@@ -93,10 +96,12 @@ class BehaviouralFlag(models.Model):
 
     This runs O(1) per submission — cost doesn't grow with class size.
     """
+    # Confidence that the flag indicates misconduct — one meaning everywhere.
+    # Set by compute_behavioural_risk from the number of signals that fired.
     CONFIDENCE_CHOICES = [
-        ('low',    'Low'),     # 1 signal triggered
+        ('low',    'Low'),     # 1 signal triggered — weak evidence
         ('medium', 'Medium'),  # 2 signals triggered
-        ('high',   'High'),    # 3+ signals triggered
+        ('high',   'High'),    # 3+ signals triggered — most suspicious
     ]
 
     submission = models.OneToOneField(
@@ -114,7 +119,7 @@ class BehaviouralFlag(models.Model):
     submission_score   = models.FloatField(default=0.0)  # code change between own attempts
 
     # human-readable list of triggered signals — shown in trainer UI
-    # e.g. ["Pasted 68% of code", "Solved hard problem in 2m 14s"]
+    # e.g. ["Pasted 68% of code", "Submitted 2m 14s after starting, on a hard problem (typical: 8m 0s)"]
     signals_triggered = models.JSONField(default=list)
 
     review_status = models.CharField(

@@ -19,6 +19,7 @@ class SubmissionResultsView(APIView):
         if request.user.role != 'trainer' and submission.student != request.user:
             return Response({'error': 'Not allowed'}, status=status.HTTP_403_FORBIDDEN)
 
-        results = Result.objects.filter(submission=submission)  # all test case results for this submission
-        serializer = ResultSerializer(results, many=True)
+        from exams.serializers import sees_hidden_tests
+        results = Result.objects.filter(submission=submission).select_related('test_case')  # all test case results for this submission
+        serializer = ResultSerializer(results, many=True, context={'show_hidden': sees_hidden_tests(request.user)})
         return Response(serializer.data)

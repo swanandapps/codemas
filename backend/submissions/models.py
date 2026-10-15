@@ -4,11 +4,12 @@ from django.conf import settings  # to reference AUTH_USER_MODEL safely
 
 class Submission(models.Model):
     STATUS_CHOICES = [  # tracks where this submission is in the pipeline
-        ('pending', 'Pending'),        # just received, not yet queued
-        ('running', 'Running'),        # Docker container is executing it
+        ('pending', 'Pending'),        # just received, not yet picked up by a grader
+        ('running', 'Running'),        # a grader (the codemas-exec Lambda, or the legacy Celery task) is running the tests
         ('passed', 'Passed'),          # all test cases passed
         ('failed', 'Failed'),          # one or more test cases failed
-        ('error', 'Error'),            # code threw an exception or timed out
+        ('error', 'Error'),            # couldn't be graded (grader died 3 times, or no test cases); doesn't use up an attempt.
+                                       # The student's own exception or timeout is 'failed'.
     ]
 
     student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='submissions')  # who submitted
@@ -16,11 +17,11 @@ class Submission(models.Model):
     question = models.ForeignKey('exams.Question', on_delete=models.CASCADE, related_name='submissions')  # which question
     code = models.TextField()  # the actual code the student submitted
     language = models.CharField(max_length=20)  # which language they used
-    attempt_number = models.PositiveIntegerField()  # 1st, 2nd or 3rd attempt — enforced server side
+    attempt_number = models.PositiveIntegerField()  # 1, 2, 3... per (student, question), unique; can exceed max_attempts because 'error' attempts are refunded
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')  # current state in the pipeline
     submitted_at = models.DateTimeField(auto_now_add=True)  # exact timestamp of submission
     time_remaining_seconds = models.PositiveIntegerField(null=True, blank=True)  # seconds left on exam clock at submission time
-    execution_time_ms = models.PositiveIntegerField(null=True, blank=True)  # how long student code ran in Docker, null until execution completes
+    execution_time_ms = models.PositiveIntegerField(null=True, blank=True)  # total run time of the student's code across all tests, null until graded
     plagiarism_score = models.FloatField(null=True, blank=True)  # 0.0 to 1.0, populated async after submission, null until checked
     behavioural_check_done = models.BooleanField(default=False)  # True once run_behavioural_check has completed
     similarity_check_done  = models.BooleanField(default=False)  # True once run_question_plagiarism_check has included this submission
@@ -35,6 +36,9 @@ class Submission(models.Model):
 
     class Meta:  # extra database-level configuration
         ordering = ['-submitted_at']  # newest submissions first by default
+        constraints = [
+            models.UniqueConstraint(fields=['student', 'question', 'attempt_number'], name='unique_attempt_per_question'),
+        ]
 
     def __str__(self):
         return f"{self.student.username} | Q{self.question.id} | attempt {self.attempt_number}"

@@ -12,15 +12,16 @@
         <div v-else-if="exams.length === 0" class="state-msg">No exams available yet.</div>
 
         <div v-else class="exam-grid">
-            <div
+            <router-link
                 v-for="exam in exams"
                 :key="exam.id"
+                :to="exam.finished_at ? '/results' : `/exams/${exam.id}`"
                 class="exam-card"
-                @click="goToExam(exam.id)"
             >
                 <div class="card-top">
                     <h3>{{ exam.title }}</h3>
-                    <span :class="['status-badge', exam.is_active ? 'active' : 'inactive']">
+                    <span v-if="exam.finished_at" class="status-badge inactive">Submitted · see results</span>
+                    <span v-else :class="['status-badge', exam.is_active ? 'active' : 'inactive']">
                         {{ exam.is_active ? 'Active' : 'Closed' }}
                     </span>
                 </div>
@@ -28,23 +29,22 @@
                 <div class="exam-meta">
                     <span class="meta-item">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                        {{ exam.duration_minutes }} min
+                        {{ plural(exam.duration_minutes, 'minute') }}
                     </span>
                     <span class="meta-item">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        {{ exam.questions?.length || 0 }} questions
+                        {{ plural(exam.questions?.length || 0, 'question') }}
                     </span>
                 </div>
-                <div class="card-arrow">→</div>
-            </div>
+            </router-link>
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import api from '../api'
+import { plural } from '../utils/format'
 
 interface Exam {
     id: number
@@ -52,9 +52,8 @@ interface Exam {
     description: string
     duration_minutes: number
     is_active: boolean
+    finished_at?: string | null   // the student ended this exam early
 }
-
-const router = useRouter()
 
 const exams = ref<Exam[]>([])
 const loading = ref<boolean>(true)
@@ -71,10 +70,6 @@ onMounted(async () => {
     }
 })
 
-function goToExam(id: number): void {
-    router.push(`/exams/${id}`)
-}
-
 </script>
 
 <style scoped>
@@ -87,17 +82,20 @@ function goToExam(id: number): void {
 }
 .page-sub { color: var(--text-dim); font-size: 14px; margin-top: 4px; }
 .state-msg { color: var(--text-muted); padding: 40px 0; }
-.state-msg.error { color: var(--red); }
+.state-msg.error { color: var(--red-ink); }
 .exam-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
     gap: 16px;
 }
 .exam-card {
+    display: block;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 22px;
+    color: inherit;
+    text-decoration: none;
     cursor: pointer;
     transition: border-color 0.15s, box-shadow 0.15s;
     position: relative;
@@ -122,8 +120,8 @@ function goToExam(id: number): void {
     white-space: nowrap;
     flex-shrink: 0;
 }
-.status-badge.active { background: rgba(46,204,113,0.12); color: var(--green); }
-.status-badge.inactive { background: var(--red-dim); color: var(--red); }
+.status-badge.active { background: var(--green-dim); color: var(--green-ink); }
+.status-badge.inactive { background: var(--surface2); color: var(--text-muted); } /* closed is a state, not a failure */
 .exam-desc {
     font-size: 13px;
     color: var(--text-muted);
@@ -141,13 +139,9 @@ function goToExam(id: number): void {
     font-size: 13px;
     color: var(--text-dim);
 }
-.card-arrow {
-    position: absolute;
-    right: 20px;
-    bottom: 20px;
-    color: var(--text-dim);
-    font-size: 16px;
-    transition: color 0.15s, transform 0.15s;
+
+@media (max-width: 600px) {
+    .exam-grid { grid-template-columns: 1fr; }
+    .page-header { flex-wrap: wrap; gap: 8px; }
 }
-.exam-card:hover .card-arrow { color: var(--red); transform: translateX(3px); }
 </style>

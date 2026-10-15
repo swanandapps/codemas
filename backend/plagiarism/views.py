@@ -14,6 +14,8 @@ from .serializers import (
     PlagiarismPolicySerializer, ReviewAuditLogSerializer,
 )
 from .tasks import normalize_code
+from exams.models import newest_exam_first, exam_status
+from analytics import metrics
 
 
 def _log_review(reviewer, flag_type, flag_id, action, note):
@@ -26,6 +28,18 @@ def _log_review(reviewer, flag_type, flag_id, action, note):
     )
 
 
+# The trainer decisions a student sees (My results): every confirmed flag, and a dismissed one
+# when the trainer left a note. Pending flags, scores and the other student stay trainer-only.
+SHOWN_TO_STUDENT = Q(review_status='confirmed') | (Q(review_status='dismissed') & ~Q(review_note=''))
+
+
+def _outcome_changed(student_ids, exam_id):
+    """A review changed these students' integrity outcome on the exam: their stored exam
+    summary no longer matches it, so it is rewritten on the next view."""
+    from ai.tasks import forget_exam_summaries
+    forget_exam_summaries(student_ids, exam_id)
+
+
 class PlagiarismFlagListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -36,7 +50,7 @@ class PlagiarismFlagListView(APIView):
         flags = PlagiarismFlag.objects.filter(flagged=True).select_related(
             'submission_1__student', 'submission_1__question', 'submission_1__exam',
             'submission_2__student', 'submission_2__question',
-        ).order_by('-similarity_score')
+        ).order_by(newest_exam_first('submission_1__exam__'), '-similarity_score', '-id')  # newest exam, worst first
         serializer = PlagiarismFlagSerializer(flags, many=True)
         return Response(serializer.data)
 
@@ -63,7 +77,59 @@ class PlagiarismFlagReviewView(APIView):
         flag.save()
 
         _log_review(request.user, 'similarity', flag.id, review_status, note)
+        s1, s2 = flag.submission_1, flag.submission_2
+        _outcome_changed([s1.student_id, s2.student_id], s1.exam_id)
         return Response(PlagiarismFlagSerializer(flag).data)
+
+
+class MyReviewsView(APIView):
+    """GET /api/plagiarism/mine/ — a student's integrity reviews: what the trainer decided and wrote.
+
+    Only reviewed flags reach the student (SHOWN_TO_STUDENT).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'student':
+            return Response({'error': 'Only students have integrity reviews'}, status=status.HTTP_403_FORBIDDEN)
+
+        shown = SHOWN_TO_STUDENT
+        mine = Q(submission_1__student=request.user) | Q(submission_2__student=request.user)
+        reviews = []
+        for f in BehaviouralFlag.objects.filter(shown, submission__student=request.user).select_related(
+            'submission__question',
+        ):
+            reviews.append(_my_review(f, f.submission, 'behaviour'))
+        for f in PlagiarismFlag.objects.filter(shown & mine).select_related(
+            'submission_1__question', 'submission_2__question',
+        ):
+            sub = f.submission_1 if f.submission_1.student_id == request.user.id else f.submission_2
+            reviews.append(_my_review(f, sub, 'similarity'))
+        reviews.sort(key=lambda r: r.pop('_at'), reverse=True)  # latest attempt first, behaviour before pairs
+
+        # A case decision writes the student's note on each of their flags, so the same words
+        # can sit on a behaviour flag and a pair: show each note once per exam.
+        seen = set()
+        for r in reviews:
+            key = (r['exam_id'], r['review_note'])
+            if r['review_note'] and key in seen:
+                r['review_note'] = ''
+            seen.add(key)
+        return Response(reviews)
+
+
+def _my_review(flag, sub, kind):
+    return {
+        'kind': kind,
+        'exam_id': sub.exam_id,
+        'question_id': sub.question_id,
+        'question_title': sub.question.title,
+        'submission_id': sub.id,
+        'attempt_number': sub.attempt_number,
+        'review_status': flag.review_status,
+        'review_note': flag.review_note,
+        '_at': sub.submitted_at,  # sort key, removed before the response
+    }
 
 
 class BehaviouralFlagListView(APIView):
@@ -75,14 +141,23 @@ class BehaviouralFlagListView(APIView):
 
         qs = BehaviouralFlag.objects.select_related(
             'submission__student', 'submission__question', 'submission__exam'
-        ).order_by('-risk_score', '-submission__submitted_at')
+        ).order_by(newest_exam_first('submission__exam__'), '-risk_score', '-submission__submitted_at')
 
         review_status = request.query_params.get('status')
         if review_status and review_status != 'all':
             qs = qs.filter(review_status=review_status)
 
         serializer = BehaviouralFlagSerializer(qs, many=True)
-        return Response(serializer.data)
+        policy = PlagiarismPolicy.get()
+        return Response({
+            'flags': serializer.data,
+            'policy_weights': {
+                'paste': policy.paste_weight,
+                'time': policy.time_weight,
+                'tab': policy.tab_weight,
+                'submission': policy.submission_weight,
+            },
+        })
 
 
 class BehaviouralFlagReviewView(APIView):
@@ -107,6 +182,7 @@ class BehaviouralFlagReviewView(APIView):
         flag.save()
 
         _log_review(request.user, 'behavioural', flag.id, review_status, note)
+        _outcome_changed([flag.submission.student_id], flag.submission.exam_id)
         return Response(BehaviouralFlagSerializer(flag).data)
 
 
@@ -173,7 +249,7 @@ class PolicyChangelogView(APIView):
             overlapping = Exam.objects.filter(
                 start_time__lt=period_end,
                 end_time__gt=period_start,
-            ).values('id', 'title', 'start_time', 'end_time', 'is_active')
+            ).order_by(newest_exam_first(), '-id').values('id', 'title', 'start_time', 'end_time', 'is_active')
 
             exam_rows = []
             for ex in overlapping:
@@ -247,7 +323,7 @@ class SubmissionPlagiarismView(APIView):
         )
         sim_flags = sim_flags.select_related(
             'submission_1__student', 'submission_2__student'
-        )
+        ).order_by('-checked_at', '-id')
 
         similarity = []
         for f in sim_flags:
@@ -403,7 +479,173 @@ class PlagiarismRunListView(APIView):
         return Response(rows)
 
 
+def _rings(edges):
+    """Connected components of size >= 2 in an undirected student graph given as (a, b) pairs."""
+    adj = {}
+    for a, b in edges:
+        adj.setdefault(a, set()).add(b)
+        adj.setdefault(b, set()).add(a)
+    visited = set()
+    components = []
+    for start in adj:
+        if start in visited:
+            continue
+        stack, component = [start], []
+        while stack:
+            node = stack.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            component.append(node)
+            stack.extend(adj.get(node, set()) - visited)
+        if len(component) >= 2:
+            components.append(component)
+    return components
+
+
+def _case_status(statuses):
+    """A case's outcome from its flags' review statuses: pending while any flag waits."""
+    if 'pending' in statuses:
+        return 'pending'
+    if set(statuses) == {'dismissed'}:
+        return 'dismissed'
+    if set(statuses) == {'confirmed'}:
+        return 'confirmed'
+    return 'mixed'
+
+
+def _cases(pairs, b_flags, usernames):
+    """Cases to decide on one exam. A case is one group of students linked by similarity
+    pairs that count (not dismissed), plus each student with a counted behavioural flag
+    who is in no such group. Students whose flags were all dismissed still form decided
+    cases (linked by their dismissed pairs) so a dismissed case stays on the page.
+    Every flag belongs to at most one case; a dismissed pair between two different cases
+    is in none. The key is the lowest student id, so it survives decisions."""
+    case_of = {}
+    groups = []
+
+    def add(group):
+        for sid in group:
+            case_of[sid] = len(groups)
+        groups.append(group)
+
+    counted = [p for p in pairs if p.review_status != 'dismissed']
+    for group in _rings((p.submission_1.student_id, p.submission_2.student_id) for p in counted):
+        add(group)
+    for f in b_flags:
+        if f.review_status != 'dismissed' and f.submission.student_id not in case_of:
+            add([f.submission.student_id])
+    dismissed = [p for p in pairs if p.review_status == 'dismissed'
+                 and p.submission_1.student_id not in case_of and p.submission_2.student_id not in case_of]
+    for group in _rings((p.submission_1.student_id, p.submission_2.student_id) for p in dismissed):
+        add(group)
+    for f in b_flags:
+        if f.submission.student_id not in case_of:
+            add([f.submission.student_id])
+
+    case_pairs = [[] for _ in groups]
+    case_flags = [[] for _ in groups]
+    for p in pairs:
+        a, b = case_of.get(p.submission_1.student_id), case_of.get(p.submission_2.student_id)
+        if a is not None and a == b:
+            case_pairs[a].append(p)
+    for f in b_flags:
+        case_flags[case_of[f.submission.student_id]].append(f)
+
+    cases = []
+    for group, cp, cf in zip(groups, case_pairs, case_flags):
+        cp.sort(key=lambda p: -p.similarity_score)
+        cf.sort(key=lambda f: -f.risk_score)
+        statuses = [p.review_status for p in cp] + [f.review_status for f in cf]
+        cases.append({
+            'key': str(min(group)),
+            'members': [
+                {'student_id': sid, 'username': usernames[sid][0], 'first_name': usernames[sid][1]}
+                for sid in sorted(group, key=lambda sid: usernames[sid][0])
+            ],
+            'pairs': [{
+                'id': p.id,
+                'submission_1': p.submission_1_id,
+                'submission_2': p.submission_2_id,
+                'student_1_id': p.submission_1.student_id,
+                'student_2_id': p.submission_2.student_id,
+                'attempt_1': p.submission_1.attempt_number,
+                'attempt_2': p.submission_2.attempt_number,
+                'question_title': p.submission_1.question.title,
+                'similarity_score': round(p.similarity_score, 3),
+                'review_status': p.review_status,
+                'review_note': p.review_note,
+            } for p in cp],
+            'behavioural': BehaviouralFlagSerializer(cf, many=True).data,
+            'pending': statuses.count('pending'),
+            'status': _case_status(statuses),
+            'max_similarity': round(max((p.similarity_score for p in cp), default=0), 3),
+            'max_risk': metrics.risk(cf[0].risk_score) if cf else None,
+        })
+
+    # Numbered by severity (strongest code match, then behavioural risk) so a case keeps
+    # its number when it is decided; listed with the ones still waiting first.
+    cases.sort(key=lambda c: (-c['max_similarity'], -(c['max_risk'] or 0), c['key']))
+    for n, c in enumerate(cases, 1):
+        c['number'] = n
+    cases.sort(key=lambda c: c['status'] != 'pending')
+    return cases
+
+
+def exam_cases(exam_id, students=None):
+    """The cases on one exam, as the investigation detail lists them (see _cases). Every flag
+    on the exam counts, dismissed ones too, between students of the student population who
+    submitted on it. `students` is {student_id: (username, first_name)} for those students;
+    it is looked up when not given. The student page and the exam report use this too, so a
+    case has the same key on every page."""
+    from submissions.models import Submission
+
+    if students is None:
+        students = {
+            sid: (username, first_name) for sid, username, first_name in
+            metrics.student_submissions(Submission.objects.filter(exam_id=exam_id)).order_by()
+            .values_list('student_id', 'student__username', 'student__first_name').distinct()
+        }
+    pairs = [
+        p for p in PlagiarismFlag.objects.filter(flagged=True, submission_1__exam_id=exam_id)
+        .select_related('submission_1__question', 'submission_2')
+        if p.submission_1.student_id in students and p.submission_2.student_id in students
+    ]
+    b_flags = [
+        f for f in BehaviouralFlag.objects.filter(submission__exam_id=exam_id)
+        .select_related('submission__student', 'submission__question', 'submission__exam')
+        if f.submission.student_id in students
+    ]
+    return _cases(pairs, b_flags, students)
+
+
+def case_keys(cases):
+    """{student_id: key of the case they are in}."""
+    return {m['student_id']: c['key'] for c in cases for m in c['members']}
+
+
+def pending_cases(cases):
+    """Cases to decide: cases with a flag still pending review."""
+    return sum(1 for c in cases if c['status'] == 'pending')
+
+
+def cases_to_decide():
+    """Cases to decide across every exam (the Investigation sidebar count): the sum of each
+    exam's case-file count. Only an exam with a pending flag can have one, so only those
+    exams are grouped into cases."""
+    from submissions.models import Submission
+    pending = Q(behavioural_flag__review_status='pending') | Q(
+        plagiarism_as_first__flagged=True, plagiarism_as_first__review_status='pending')
+    exam_ids = set(
+        metrics.student_submissions(Submission.objects.filter(pending))
+        .order_by().values_list('exam_id', flat=True).distinct()
+    )
+    return sum(pending_cases(exam_cases(eid)) for eid in exam_ids)
+
+
 class CohortListView(APIView):
+    """Investigations list: one row per exam that students took. Integrity rate
+    is the canonical flagged-students rate (analytics.metrics)."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -412,68 +654,46 @@ class CohortListView(APIView):
 
         from submissions.models import Submission
         from exams.models import Exam
+        from analytics import metrics
+
+        exams = list(Exam.objects.order_by(newest_exam_first(), '-id'))
+        summaries = metrics.exam_summaries([e.id for e in exams])
+        subs = metrics.student_submissions(Submission.objects.all())
+        sub_counts = {r['exam_id']: r['n'] for r in subs.order_by().values('exam_id').annotate(n=Count('id'))}
+        b_counts = {
+            r['exam_id']: r['n'] for r in
+            subs.filter(metrics.FLAGGED).order_by().values('exam_id').annotate(n=Count('id'))
+        }
+        edges_by_exam = {}   # dismissed flags don't count, here or on any other page
+        for exam_id, s1, s2 in metrics.similarity_flags().values_list(
+            'submission_1__exam_id', 'submission_1__student_id', 'submission_2__student_id',
+        ):
+            edges_by_exam.setdefault(exam_id, []).append((s1, s2))
 
         rows = []
-        for exam in Exam.objects.order_by('-start_time'):
-            total = Submission.objects.filter(exam=exam).values('student_id').distinct().count()
-            if total == 0:
+        for exam in exams:
+            summary = summaries[exam.id]
+            if summary['took'] == 0:
                 continue
-
-            b_flags = BehaviouralFlag.objects.filter(submission__exam=exam)
-            b_count = b_flags.count()
-            b_student_ids = set(b_flags.values_list('submission__student_id', flat=True))
-
-            s_flags = list(PlagiarismFlag.objects.filter(flagged=True, submission_1__exam=exam).select_related('submission_1', 'submission_2'))
-            s_count = len(s_flags)
-            s_student_ids = set()
-            adj = {}
-            for flag in s_flags:
-                s1 = flag.submission_1.student_id
-                s2 = flag.submission_2.student_id
-                s_student_ids.add(s1)
-                s_student_ids.add(s2)
-                adj.setdefault(s1, set()).add(s2)
-                adj.setdefault(s2, set()).add(s1)
-
-            # connected components = rings
-            visited = set()
-            ring_count = 0
-            for start in adj:
-                if start in visited:
-                    continue
-                stack = [start]
-                component = []
-                while stack:
-                    node = stack.pop()
-                    if node in visited:
-                        continue
-                    visited.add(node)
-                    component.append(node)
-                    stack.extend(adj.get(node, set()) - visited)
-                if len(component) >= 2:
-                    ring_count += 1
-
-            flagged_count = len(b_student_ids | s_student_ids)
-            flag_rate = round(flagged_count / total, 3) if total else 0
-            health = 'red' if flag_rate >= 0.25 else ('amber' if flag_rate >= 0.10 else 'green')
-
+            edges = edges_by_exam.get(exam.id, [])
             rows.append({
                 'exam_id': exam.id,
                 'exam_title': exam.title,
-                'total_submissions': total,
-                'flagged_students': flagged_count,
-                'flag_rate': flag_rate,
-                'behavioural_count': b_count,
-                'similarity_count': s_count,
-                'ring_count': ring_count,
-                'health': health,
+                **summary,
+                'total_submissions': sub_counts.get(exam.id, 0),
+                'behavioural_count': b_counts.get(exam.id, 0),
+                'similarity_count': len(edges),
+                'ring_count': len(_rings(edges)),
+                'health': metrics.integrity_health(summary['flagged_students_rate']),
             })
 
-        rows.sort(key=lambda r: r['flag_rate'], reverse=True)
         return Response(rows)
 
 
 class CohortDetailView(APIView):
+    """Investigation detail for one exam. stats carry the canonical metrics;
+    `students` lists everyone with a behavioural or similarity signal, ranked
+    by combined risk, for the trainer to work through."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, exam_id):
@@ -482,12 +702,13 @@ class CohortDetailView(APIView):
 
         from submissions.models import Submission
         from exams.models import Exam
+        from analytics import metrics
 
         exam = Exam.objects.filter(pk=exam_id).first()
         if not exam:
             return Response({'error': 'Exam not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        subs = list(Submission.objects.filter(exam=exam).select_related('student'))
+        subs = list(metrics.student_submissions(Submission.objects.filter(exam=exam)).select_related('student'))
         total = len(subs)
 
         student_data = {}
@@ -499,49 +720,45 @@ class CohortDetailView(APIView):
                     'username': sub.student.username,
                     'submission_id': sub.id,
                     'behavioural_risk': None,
+                    'risk': None,
                     'behavioural_confidence': None,
                     'similarity_pairs': 0,
                     'max_similarity': 0.0,
                     'past_flags': 0,
                 }
 
-        for bf in BehaviouralFlag.objects.filter(submission__exam=exam).select_related('submission'):
+        behavioural_count = 0
+        for bf in metrics.behavioural_flags().filter(submission__exam=exam).select_related('submission'):
             sid = bf.submission.student_id
             if sid in student_data:
-                student_data[sid]['behavioural_risk'] = round(bf.risk_score, 3)
-                student_data[sid]['behavioural_confidence'] = bf.confidence
+                behavioural_count += 1
+                # a student can carry several flags on one exam: keep the riskiest
+                if student_data[sid]['behavioural_risk'] is None or bf.risk_score > student_data[sid]['behavioural_risk']:
+                    student_data[sid]['behavioural_risk'] = round(bf.risk_score, 3)
+                    student_data[sid]['risk'] = metrics.risk(bf.risk_score)
+                    student_data[sid]['behavioural_confidence'] = bf.confidence
 
-        # Build similarity adjacency list for ring detection
-        adj = {}
         sim_flags = list(
-            PlagiarismFlag.objects.filter(flagged=True, submission_1__exam=exam)
+            metrics.similarity_flags().filter(submission_1__exam=exam)
             .select_related('submission_1', 'submission_2')
         )
         for flag in sim_flags:
-            s1_id = flag.submission_1.student_id
-            s2_id = flag.submission_2.student_id
             score = flag.similarity_score
-
-            for sid in (s1_id, s2_id):
+            for sid in (flag.submission_1.student_id, flag.submission_2.student_id):
                 if sid in student_data:
                     student_data[sid]['similarity_pairs'] += 1
                     if score > student_data[sid]['max_similarity']:
                         student_data[sid]['max_similarity'] = score
 
-            adj.setdefault(s1_id, set()).add(s2_id)
-            adj.setdefault(s2_id, set()).add(s1_id)
-
         # Past flags across other exams
         sub_ids_this_exam = {s.id for s in subs}
         for sid in student_data:
-            past_sim = PlagiarismFlag.objects.filter(
-                flagged=True
-            ).filter(
+            past_sim = metrics.similarity_flags().filter(
                 Q(submission_1__student_id=sid) | Q(submission_2__student_id=sid)
             ).exclude(
                 Q(submission_1_id__in=sub_ids_this_exam) | Q(submission_2_id__in=sub_ids_this_exam)
             ).count()
-            past_b = BehaviouralFlag.objects.filter(
+            past_b = metrics.behavioural_flags().filter(
                 submission__student_id=sid
             ).exclude(submission__exam=exam).count()
             student_data[sid]['past_flags'] = past_sim + past_b
@@ -556,38 +773,23 @@ class CohortDetailView(APIView):
             student_list.append(s)
 
         student_list.sort(key=lambda s: s['combined_risk'], reverse=True)
-        flagged_students = [s for s in student_list if s['combined_risk'] > 0]
+        students_to_review = [s for s in student_list if s['combined_risk'] > 0]
 
-        # Connected-component ring detection
-        visited = set()
+        # Cases see every flag on the exam (dismissed ones too, as decided cases), students only
+        first_names = {sub.student_id: sub.student.first_name for sub in subs}
+        cases = exam_cases(exam.id, {
+            sid: (s['username'], first_names.get(sid, '')) for sid, s in student_data.items()
+        })
+        case_of = case_keys(cases)
+        for s in students_to_review:
+            s['case'] = case_of.get(s['student_id'])
+
         rings = []
-        component_set = {}  # node -> component index
-
-        for start_id in adj:
-            if start_id in visited:
-                continue
-            component = []
-            stack = [start_id]
-            while stack:
-                node = stack.pop()
-                if node in visited:
-                    continue
-                visited.add(node)
-                component.append(node)
-                stack.extend(adj.get(node, set()) - visited)
-
-            if len(component) < 2:
-                continue
-
+        for component in _rings((f.submission_1.student_id, f.submission_2.student_id) for f in sim_flags):
             comp_set = set(component)
             ring_edges = [f for f in sim_flags
                           if f.submission_1.student_id in comp_set
                           and f.submission_2.student_id in comp_set]
-
-            avg_sim = round(sum(f.similarity_score for f in ring_edges) / len(ring_edges), 3) if ring_edges else 0
-            max_sim = round(max((f.similarity_score for f in ring_edges), default=0), 3)
-            confirmed = sum(1 for f in ring_edges if f.review_status == 'confirmed')
-
             members = [
                 {'student_id': sid, 'username': student_data[sid]['username']}
                 for sid in component if sid in student_data
@@ -595,30 +797,48 @@ class CohortDetailView(APIView):
             rings.append({
                 'size': len(members),
                 'members': members,
-                'avg_similarity': avg_sim,
-                'max_similarity': max_sim,
-                'confirmed': confirmed,
+                'avg_similarity': round(sum(f.similarity_score for f in ring_edges) / len(ring_edges), 3) if ring_edges else 0,
+                'max_similarity': round(max((f.similarity_score for f in ring_edges), default=0), 3),
+                'confirmed': sum(1 for f in ring_edges if f.review_status == 'confirmed'),
+                'case': case_of.get(members[0]['student_id']) if members else None,
             })
 
         rings.sort(key=lambda r: r['size'], reverse=True)
 
+        from .models import PlagiarismRun
+        last_run = (PlagiarismRun.objects.filter(exam=exam, status='completed')
+                    .exclude(completed_at=None).order_by('-completed_at').first())
+
+        summary = metrics.exam_summary(exam.id)
         return Response({
             'exam': {
                 'id': exam.id,
                 'title': exam.title,
+                'status': exam_status(exam),
+                'question_count': exam.questions.count(),
+                'duration_minutes': exam.duration_minutes,
                 'start_time': exam.start_time.isoformat() if exam.start_time else None,
                 'end_time': exam.end_time.isoformat() if exam.end_time else None,
+                'last_checked_at': last_run.completed_at.isoformat() if last_run else None,
             },
             'stats': {
+                **summary,
                 'total_submissions': total,
-                'flagged_students': len(flagged_students),
-                'flag_rate': round(len(flagged_students) / total, 3) if total else 0,
-                'behavioural_count': BehaviouralFlag.objects.filter(submission__exam=exam).count(),
+                'behavioural_count': behavioural_count,
                 'similarity_count': len(sim_flags),
                 'ring_count': len(rings),
+                'cases_to_decide': pending_cases(cases),
+                'health': metrics.integrity_health(summary['flagged_students_rate']),
             },
-            'students': flagged_students,
+            'students': students_to_review,
             'rings': rings,
+            'cases': cases,
+            # open appeals on this exam: the case shows "Appeal pending" with the student's response
+            'appeals': [
+                {'id': a.id, 'student_id': a.student_id, 'student_note': a.student_note,
+                 'created_at': a.created_at.isoformat()}
+                for a in exam.appeals.filter(status='open').order_by('created_at')
+            ],
         })
 
 
@@ -632,6 +852,8 @@ class MonitoringView(APIView):
         now = timezone.now()
         last7  = now - timedelta(days=7)
         prev7  = now - timedelta(days=14)
+
+        from analytics import metrics
 
         # ── Behavioural summary ──────────────────────────────────────────────
         bq = BehaviouralFlag.objects.all()
@@ -717,7 +939,7 @@ class MonitoringView(APIView):
         # ── Per-exam coverage ────────────────────────────────────────────────
         from exams.models import Exam
         exam_rows = []
-        for exam in Exam.objects.order_by('-id')[:20]:
+        for exam in Exam.objects.order_by(newest_exam_first(), '-id')[:20]:
             subs = Submission.objects.filter(exam=exam)
             total = subs.count()
             if total == 0:
@@ -744,6 +966,7 @@ class MonitoringView(APIView):
             'summary': {
                 'behavioural': {
                     'total': b_total, 'pending': b_pending,
+                    'flags_to_review': metrics.flags_to_review(),
                     'confirmed': b_confirmed, 'dismissed': b_dismissed,
                     'precision': b_precision,
                 },

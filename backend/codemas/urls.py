@@ -28,4 +28,5 @@ urlpatterns = [
     path('api/leaderboard/', include('leaderboard.urls')),
     path('api/support/', include('support.urls')),
     path('api/ai/', include('ai.urls')),  # async GPT features: rubric scoring, hints, plagiarism explanation
+    path('internal/jobs/', include('jobs.urls')),  # claim/complete/fail for the executor Lambda (per-job token)
 ]

@@ -64,10 +64,14 @@ INSTALLED_APPS = [
     "leaderboard",
     "support",
     "ai",
+    "jobs",
 ]
 
 # 5174 is the fallback port when 5173 is taken by another vite project
 CORS_ALLOWED_ORIGINS = [h.strip() for h in os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://localhost:5174').split(',') if h.strip()]
+
+# The site students and trainers open: links in emails point here (set FRONTEND_URL for local dev)
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://codemas.up.railway.app').rstrip('/')
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -82,9 +86,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '20/hour',        # unauthenticated — login attempts etc.
-        'user': '2000/hour',      # authenticated general use — dashboards make many reads per view
-        'submissions': '30/hour', # tighter limit on code submission (writes)
+        # Raised 2026-10-07: rehearsals from one network hit 20/hour. Still stops scripted guessing.
+        'anon': '500/hour',         # unauthenticated — login attempts etc.
+        'user': '10000/hour',       # authenticated general use — dashboards make many reads per view
+        'submissions': '300/hour',  # code submission (writes); attempts per question cap it anyway
     },
 }
 
@@ -119,6 +124,10 @@ CELERY_BEAT_SCHEDULE = {
     'auto-manage-exams': {
         'task': 'exams.tasks.auto_manage_exams',
         'schedule': 60.0,  # every 60 seconds — 1-minute resolution on open/close
+    },
+    'weekly-recommendations': {
+        'task': 'ai.tasks.weekly_recommendations_task',
+        'schedule': crontab(minute=30, hour=1, day_of_week='mon'),  # Monday 07:00 IST (TIME_ZONE is UTC)
     },
 }
 
@@ -227,3 +236,22 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'CodeMas <noreply@codemas.io>')
+# Seconds. Grading notifications are sent inside the Lambda's /complete/ request (on_commit);
+# a hung SMTP server must not hold a web thread past the Lambda's 15 s HTTP timeout.
+EMAIL_TIMEOUT = 10
+
+# ── Job pipeline (outbox → relay → transport → executor) ─────────────────────
+JOB_TRANSPORT = os.getenv('JOB_TRANSPORT', 'local')                 # 'local' or 'sqs'
+JOB_SIGNING_SECRET = os.getenv('JOB_SIGNING_SECRET', 'dev-only-change-me')
+# Captured here, not read from settings.DEBUG later: the test runner forces DEBUG=False at runtime.
+# When True, a missing/default/short secret stops migrate and run_relay (system check jobs.E001)
+# and the internal API answers 503. Not checked at import: the Docker build's collectstatic runs
+# with DEBUG off and no secret.
+JOB_SIGNING_SECRET_REQUIRED = not DEBUG
+CODEMAS_API_URL = os.getenv('CODEMAS_API_URL', 'http://127.0.0.1:8000')
+JOB_QUEUE_URL = os.getenv('JOB_QUEUE_URL', '')
+AWS_REGION = os.getenv('AWS_REGION', 'ap-southeast-1')
+PIPELINE_LANGUAGES = {l.strip() for l in os.getenv('PIPELINE_LANGUAGES', 'python,javascript').split(',') if l.strip()}
+RELAY_INTERVAL_S = float(os.getenv('RELAY_INTERVAL_S', '0.5'))
+JOB_LEASE_SECONDS = int(os.getenv('JOB_LEASE_SECONDS', '150'))
+LAMBDA_EXEC_DIR = Path(os.getenv('LAMBDA_EXEC_DIR', BASE_DIR.parent / 'lambda' / 'exec'))

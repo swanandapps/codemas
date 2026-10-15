@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'  // pinia store factory
 import api from '../api'  // our axios instance with JWT interceptor
+import { getAuth, saveLogin, clearLogin } from '../session'  // per-tab login
 
 interface User {
     id: number
@@ -16,8 +17,8 @@ interface AuthState {
 
 export const useAuthStore = defineStore('auth', {
     state: (): AuthState => ({
-        user: JSON.parse(localStorage.getItem('user') || 'null'),  // persist user across page refresh
-        accessToken: localStorage.getItem('access_token') || null,
+        user: getAuth()?.user ?? null,  // this tab's account survives a refresh
+        accessToken: getAuth()?.access ?? null,
     }),
 
     getters: {
@@ -32,16 +33,13 @@ export const useAuthStore = defineStore('auth', {
             this.accessToken = res.data.access
             this.user = res.data.user
 
-            // persist to localStorage so user stays logged in after refresh
-            localStorage.setItem('access_token', res.data.access)
-            localStorage.setItem('refresh_token', res.data.refresh)
-            localStorage.setItem('user', JSON.stringify(res.data.user))
+            saveLogin({ access: res.data.access, refresh: res.data.refresh, user: res.data.user })
         },
 
         logout(): void {
             this.accessToken = null
             this.user = null
-            localStorage.clear()  // wipe all tokens and user data
+            clearLogin()  // this tab only: other tabs keep their accounts
         },
     },
 })

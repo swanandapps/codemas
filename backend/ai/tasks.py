@@ -135,13 +135,19 @@ def generate_hint(submission_id):
     if not failed:
         return  # nothing concrete to hint about
 
+    # The hint is shown to the student, so a hidden test's input/expected output
+    # never goes into the prompt (the model could echo it back).
+    if failed.test_case.is_hidden:
+        case_lines = "  (hidden test: its input and expected output are secret; do not guess them)\n"
+    else:
+        case_lines = (f"  input: {failed.test_case.input_data}\n"
+                      f"  expected output: {failed.test_case.expected_output}\n")
     user_prompt = (
         f"QUESTION:\n{submission.question.title}\n{submission.question.description}\n\n"
         f"LANGUAGE: {submission.language}\n\n"
         f"FAILED TEST CASE:\n"
-        f"  input: {failed.test_case.input_data}\n"
-        f"  expected output: {failed.test_case.expected_output}\n"
-        f"  student's output: {failed.actual_output}\n"
+        + case_lines
+        + f"  student's output: {failed.actual_output}\n"
         + (f"  error: {failed.error_message}\n" if failed.error_message else "")
         + f"\nSTUDENT CODE:\n{submission.code}"
     )
@@ -189,7 +195,8 @@ def _behaviour_summary(submission):
     ]
     flag = getattr(submission, 'behavioural_flag', None)
     if flag is not None:
-        parts.append(f"behavioural risk: {flag.risk_score:.2f} ({flag.confidence})")
+        parts.append(f"behavioural risk: {flag.risk_score:.2f} "
+                     f"({flag.confidence} confidence of misconduct)")
         if flag.signals_triggered:
             parts.append("signals: " + "; ".join(flag.signals_triggered))
     return " | ".join(parts)
@@ -267,13 +274,76 @@ EXAM_SUMMARY_SYSTEM_PROMPT = (
     "outcomes and rubric scores provided. Write 3-4 sentences addressed to the "
     "student ('you'): note overall performance, a clear strength, and one concrete "
     "area to improve. Be specific and constructive, not generic.\n"
+    "The input ends with the exam's integrity outcome. If points were withheld after a "
+    "plagiarism review, say so neutrally in one sentence (e.g. '20 points were withheld "
+    "after a plagiarism review'), without judging or speculating. Never praise a score, "
+    "solution or question whose points were withheld. If a decision was overturned, the "
+    "points count as normal. Do not mention the integrity outcome when there is none.\n"
+    "The Result line is the exam's outcome: a question not counted for plagiarism is not "
+    "solved, so never call it solved or call the exam passed when the line says not passed.\n"
     "Respond ONLY with a JSON object: {\"summary\": \"<3-4 sentences>\"}"
 )
 
 
+def result_line(result):
+    """The exam's outcome in plain words, from a metrics.exam_results row: the pass rule over the
+    counted solves, and why any solved question did not count (confirmed plagiarism)."""
+    line = (f"{'passed' if result['passed'] else 'not passed'}: solved {result['solved']} "
+            f"of {result['total']} questions (at least half passes)")
+    if result['voided']:
+        n = result['voided']
+        line += (f"; {n} solved question{'s' if n != 1 else ''} not counted: "
+                 f"plagiarism confirmed by the trainer")
+    return line
+
+
+def integrity_line(outcome):
+    """The exam summary's last input line: the student's integrity outcome on the exam
+    (support.integrity.integrity_outcomes), in plain words."""
+    if not outcome:
+        return 'Integrity: no plagiarism decision on this exam.'
+    appeal = {
+        'open': ' The student has appealed; the appeal is under review.',
+        'upheld': ' The student appealed and the decision was upheld.',
+    }.get(outcome['appeal'], '')
+    kind = outcome['outcome']
+    if kind == 'withheld':
+        line = (f"{outcome['points_withheld']} points withheld after a plagiarism review confirmed by "
+                f"the trainer; the score already leaves them out.")
+    elif kind == 'overturned':
+        line = 'A plagiarism decision on this exam was overturned on appeal: every point counts as normal.'
+    elif kind == 'confirmed':
+        line = 'The trainer confirmed a plagiarism finding on this exam; no points were withheld.'
+    else:
+        line = 'The trainer reviewed this exam for plagiarism and took no action.'
+    return f'Integrity: {line}{appeal}'
+
+
+def forget_exam_summaries(student_ids, exam_id):
+    """Delete these students' stored summaries of the exam, so each is rewritten on its next
+    view. Called whenever their integrity outcome there changes: a flag review (confirm or
+    dismiss), an appeal filed, upheld or overturned."""
+    ExamSummary = apps.get_model('ai', 'ExamSummary')
+    ExamSummary.objects.filter(student_id__in=list(student_ids), exam_id=exam_id).delete()
+
+
+def exam_summary_final_at(student_id, exam):
+    """When the student's results on the exam became final (they submitted it, or it ended);
+    None while they can still submit, so no summary is written yet."""
+    from exams.models import ExamEnrollment, results_final_at
+    finished_at = (ExamEnrollment.objects.filter(exam=exam, student_id=student_id)
+                   .values_list('finished_at', flat=True).first())
+    return results_final_at(exam, finished_at)
+
+
 def generate_exam_summary(student_id, exam_id):
     """Generate and store an exam-level summary for one student. Returns the
-    ExamSummary instance, or None if unavailable (no key / provider error).
+    ExamSummary instance, or None if unavailable (results not final yet, no key,
+    provider error).
+
+    Written only once the results are final (the student submitted the exam or it
+    ended), so it never freezes a mid-exam picture. A row written before that
+    (by an older version) is rewritten.
 
     Safe to call inline from a view (synchronous) or as a Celery task.
     """
@@ -282,13 +352,16 @@ def generate_exam_summary(student_id, exam_id):
     ExamSummary = apps.get_model('ai', 'ExamSummary')
     Exam = apps.get_model('exams', 'Exam')
 
-    existing = ExamSummary.objects.filter(student_id=student_id, exam_id=exam_id).first()
-    if existing:
-        return existing
-
     exam = Exam.objects.filter(pk=exam_id).first()
     if not exam:
         return None
+    final_at = exam_summary_final_at(student_id, exam)
+    if final_at is None:
+        return None
+
+    existing = ExamSummary.objects.filter(student_id=student_id, exam_id=exam_id).first()
+    if existing and existing.created_at >= final_at:
+        return existing
 
     subs = (
         Submission.objects
@@ -302,10 +375,17 @@ def generate_exam_summary(student_id, exam_id):
         r.submission_id: r
         for r in RubricScore.objects.filter(submission__in=subs)
     }
+    from analytics import metrics
+    from support.integrity import integrity_outcomes
+    withheld_qs = {qid for _, qid in metrics.withheld_points(subs)}
+    outcome = integrity_outcomes(student_id, [exam_id]).get(exam_id)
+    result = next(iter(metrics.exam_results(subs)), None)   # counted solves: voided questions left out
 
     lines = []
     for s in subs:
         line = f"- {s.question.title} (attempt {s.attempt_number}): {s.status}"
+        if s.status == 'passed' and s.question_id in withheld_qs:
+            line += ', points withheld (plagiarism confirmed)'
         r = rubric_by_sub.get(s.id)
         if r:
             line += (
@@ -318,6 +398,8 @@ def generate_exam_summary(student_id, exam_id):
     user_prompt = (
         f"EXAM: {exam.title}\n\n"
         f"This student's submissions and rubric scores:\n" + "\n".join(lines)
+        + (f"\n\nResult: {result_line(result)}." if result else '')
+        + f"\n\n{integrity_line(outcome)}"
     )
 
     try:
@@ -331,6 +413,8 @@ def generate_exam_summary(student_id, exam_id):
         return None
 
     from .llm import DEFAULT_MODEL
+    if existing:
+        existing.delete()   # written before the results were final; created_at must restamp
     obj, _ = ExamSummary.objects.get_or_create(
         student_id=student_id, exam_id=exam_id,
         defaults={'summary': summary_text, 'model_used': DEFAULT_MODEL},
@@ -347,11 +431,26 @@ def exam_summary_task(student_id, exam_id):
 EXAM_GEN_SYSTEM_PROMPT = (
     "You are an expert coding-exam author. Generate a coding exam as JSON. "
     "Every question must be solvable in the requested language by reading from "
-    "stdin and printing to stdout. The description MUST state the exact input "
-    "format (per line) and output format. Each question needs exactly 3 test "
+    "stdin and printing to stdout. Write each description as plain text (no markdown) "
+    "in this layout, each label starting its own line:\n"
+    "<problem statement: 1-3 short paragraphs, separated by a blank line>\n"
+    "Input format:\n<one line per stdin line, e.g. 'Line 1: an integer n, the array length'>\n"
+    "Output format:\n<exactly what to print, e.g. 'Two indices separated by a space'>\n"
+    "Constraints:\n<one constraint per line, e.g. '1 <= n <= 1000'>\n"
+    "Do not put examples in the description: the first test case is shown to students "
+    "as the example, so make it a typical, easy-to-follow case. Each question needs exactly 3 test "
     "cases with concrete input_data and the EXACT expected_output a correct "
     "program would print (no trailing prose). Keep inputs simple and "
-    "unambiguous.\n"
+    "unambiguous, and make the 3 test cases exercise different behaviour so a buggy "
+    "solution fails at least one: a typical case, a boundary case (e.g. the answer at the "
+    "first or last position, or a single-element input) and a negative case (e.g. the "
+    "target is absent) where the problem allows.\n"
+    "Each question also needs starter code in BOTH JavaScript and Python, like HackerRank: "
+    "it reads stdin exactly in the stated input format (JavaScript: "
+    "require('fs').readFileSync(0, 'utf8'); Python: sys.stdin.read()), parses the values, "
+    "defines ONE function with a descriptive name whose body is only a comment "
+    "'Write your code here' plus what to return (Python body ends with pass), then prints "
+    "the function's return value in the exact output format. Students write only the body.\n"
     "Respond ONLY with a JSON object of this exact shape:\n"
     "{\n"
     '  "title": "<exam title>",\n'
@@ -359,13 +458,25 @@ EXAM_GEN_SYSTEM_PROMPT = (
     '  "questions": [\n'
     '    {\n'
     '      "title": "<question title>",\n'
-    '      "description": "<problem statement incl. input/output format>",\n'
+    '      "description": "<statement, then Input format / Output format / Constraints lines>",\n'
     '      "difficulty": "easy" | "medium" | "hard",\n'
-    '      "test_cases": [ {"input_data": "<stdin>", "expected_output": "<stdout>"} ]\n'
+    '      "test_cases": [ {"input_data": "<stdin>", "expected_output": "<stdout>"} ],\n'
+    '      "starter_code": {"javascript": "<starter code>", "python": "<starter code>"}\n'
     '    }\n'
     "  ]\n"
     "}"
 )
+
+
+def _draft_questions(data):
+    """The draft's question list. The model sometimes answers with ONE question flattened into the
+    exam itself (test_cases at the top level, no "questions"); that counts as a one-question list."""
+    questions = data.get('questions') if isinstance(data, dict) else None
+    if isinstance(questions, list) and questions:
+        return [q for q in questions if isinstance(q, dict)]
+    if isinstance(data, dict) and data.get('test_cases'):
+        return [data]
+    return []
 
 
 def generate_exam_draft(topic, language, num_questions, difficulty):
@@ -382,16 +493,23 @@ def generate_exam_draft(topic, language, num_questions, difficulty):
         f"Each question must have exactly 3 test cases."
     )
     data = call_json(EXAM_GEN_SYSTEM_PROMPT, user_prompt)
+    if not _draft_questions(data):
+        # Seen in prod: some topics come back with no question list. Ask once more, saying what was missing.
+        data = call_json(EXAM_GEN_SYSTEM_PROMPT, user_prompt + (
+            f'\nYour last answer had no questions. Return the JSON shape above with a "questions" '
+            f'list of exactly {num_questions} question(s).'))
 
     # Normalize defensively so the frontend always gets a consistent shape.
     questions = []
-    for q in (data.get('questions') or [])[:num_questions]:
+    for q in _draft_questions(data)[:num_questions]:
         diff = str(q.get('difficulty', difficulty)).lower()
         if diff not in ('easy', 'medium', 'hard'):
             diff = 'medium'
+        # The first case is a visible sample so students see the I/O format; the rest stay hidden.
         tcs = [
-            {'input_data': str(tc.get('input_data', '')), 'expected_output': str(tc.get('expected_output', ''))}
-            for tc in (q.get('test_cases') or [])
+            {'input_data': str(tc.get('input_data', '')), 'expected_output': str(tc.get('expected_output', '')),
+             'is_hidden': i > 0}
+            for i, tc in enumerate(q.get('test_cases') or [])
         ]
         questions.append({
             'title': str(q.get('title', 'Untitled question'))[:300],
@@ -399,6 +517,10 @@ def generate_exam_draft(topic, language, num_questions, difficulty):
             'language': language,
             'difficulty': diff,
             'test_cases': tcs,
+            'starter_code': {
+                lang: str((q.get('starter_code') or {}).get(lang) or '')
+                for lang in ('javascript', 'python')
+            },
         })
 
     return {
@@ -406,3 +528,168 @@ def generate_exam_draft(topic, language, num_questions, difficulty):
         'description': str(data.get('description', '')),
         'questions': questions,
     }
+
+
+# ── Weekly recommendation ─────────────────────────────────────────────────────
+
+WEEKLY_RECOMMENDATION_SYSTEM_PROMPT = (
+    "You are a coding coach writing a weekly study recommendation for one student. "
+    "You get the numbers from ALL of their exams together. Rules:\n"
+    "- Base every claim on the supplied numbers. Never invent a question, score or trend.\n"
+    "- A question counts as 'first try' ONLY if it is listed under passed_first_try. "
+    "Questions under passed_after_retries took more than one attempt.\n"
+    "- Each card's text must agree with its evidence; the evidence quotes the input as given.\n"
+    "- Name the specific questions, exams and topics. The headline must name at least one; "
+    "no generic phrases like 'focus on your strengths' or 'practise more'.\n"
+    "- Do not mention any programming tool, library, company, product or AI model by name.\n"
+    "- Address the student as 'you'. Keep each card to 1-2 sentences.\n"
+    "Write a one-sentence headline and three cards:\n"
+    "- keep: a habit or strength the numbers show they should keep doing;\n"
+    "- work: the most important weakness to work on;\n"
+    "- next: one concrete next step for this week.\n"
+    "Each card has 'text' (the advice) and 'evidence' (a short line quoting the real "
+    "numbers it is based on, e.g. 'Two Sum: passed on attempt 1 in Arrays Basics').\n"
+    "Respond ONLY with a JSON object of this exact shape:\n"
+    "{\n"
+    '  "headline": "<one sentence>",\n'
+    '  "keep": {"text": "<1-2 sentences>", "evidence": "<short line>"},\n'
+    '  "work": {"text": "<1-2 sentences>", "evidence": "<short line>"},\n'
+    '  "next": {"text": "<1-2 sentences>", "evidence": "<short line>"}\n'
+    "}"
+)
+
+WEEKLY_CARD_KINDS = ('keep', 'work', 'next')
+
+
+def current_week_start():
+    """Monday of the current week in India time (the recommendation's week key)."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from django.utils import timezone
+    today = timezone.now().astimezone(ZoneInfo('Asia/Kolkata')).date()
+    return today - timedelta(days=today.weekday())
+
+
+def weekly_recommendation_input(student):
+    """The numbers the model sees: every exam with at least one graded attempt.
+    The result line uses the success-rate pass rule (at least half the questions solved, a
+    question voided for confirmed plagiarism not counted) and says when one was not counted.
+
+    Questions are pre-sorted into outcome lists so the model never has to work out
+    "first try" itself. Failed first time = passed_after_retries + not_passed;
+    still unsolved = not_passed + not_attempted."""
+    from analytics import metrics
+    from leaderboard.exam_stats import student_exam_stats
+    graded = set(
+        student.submissions.filter(status__in=metrics.GRADED_STATUSES).values_list('exam_id', flat=True)
+    )
+    exams = []
+    for e in reversed(student_exam_stats(student)):  # oldest first, so trends read in order
+        if e['exam_id'] not in graded:
+            continue  # nothing graded yet in this exam
+        qs = e['questions']
+        exams.append({
+            'exam': e['exam_title'],
+            'score': f"{e['points']} / {e['points_available']} points",
+            'result': result_line({'passed': e['passed'], 'solved': e['questions_solved'],
+                                   'total': e['questions_total'], 'voided': e['questions_voided']}),
+            'rank': f"{e['rank']} of {e['cohort_size']}" if e['rank'] else 'not ranked (no points on this exam)',
+            'passed_first_try': [f"{q['title']} ({q['difficulty']})"
+                                 for q in qs if q['passed_on'] == 1],
+            'passed_after_retries': [f"{q['title']} ({q['difficulty']}): passed on attempt {q['passed_on']}"
+                                     for q in qs if q['passed_on'] and q['passed_on'] > 1],
+            'not_passed': [f"{q['title']} ({q['difficulty']}): {q['attempts']} attempts, never passed"
+                           for q in qs if q['status'] == 'failed'],
+            'not_attempted': [f"{q['title']} ({q['difficulty']})"
+                              for q in qs if q['status'] == 'not_attempted'],
+        })
+    return exams
+
+
+def generate_weekly_recommendation(student_id, week_start=None):
+    """Write (or reuse) this week's recommendation for one student.
+
+    Returns the WeeklyRecommendation, or None when the student has no graded exam or
+    the model call fails (the page then keeps showing the last good one).
+    Idempotent per (student, week). If the numbers have not changed since the last
+    recommendation, it is carried forward without another model call.
+    """
+    import hashlib
+    import json
+    User = apps.get_model('accounts', 'User')
+    WeeklyRecommendation = apps.get_model('ai', 'WeeklyRecommendation')
+
+    student = User.objects.filter(pk=student_id).first()
+    if not student:
+        return None
+    week_start = week_start or current_week_start()
+
+    existing = WeeklyRecommendation.objects.filter(student=student, week_start=week_start).first()
+    if existing:
+        return existing
+
+    exams = weekly_recommendation_input(student)
+    if not exams:
+        return None
+    payload = json.dumps(exams, sort_keys=True, default=str)
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+
+    from .llm import DEFAULT_MODEL
+    latest = WeeklyRecommendation.objects.filter(student=student).first()
+    if latest and latest.input_digest == digest:
+        obj, _ = WeeklyRecommendation.objects.get_or_create(
+            student=student, week_start=week_start,
+            defaults={'headline': latest.headline, 'cards': latest.cards,
+                      'input_digest': digest, 'model_used': latest.model_used},
+        )
+        return obj
+
+    try:
+        data = call_json(WEEKLY_RECOMMENDATION_SYSTEM_PROMPT, f"STUDENT'S EXAMS (JSON):\n{payload}")
+    except LLMUnavailable as e:
+        logger.info('weekly_recommendation: skipped student %s (%s)', student_id, e)
+        return None
+
+    try:
+        headline = str(data['headline']).strip()
+        cards = [
+            {'kind': k, 'text': str(data[k]['text']).strip(), 'evidence': str(data[k].get('evidence', '')).strip()}
+            for k in WEEKLY_CARD_KINDS
+        ]
+    except (KeyError, TypeError, AttributeError) as e:
+        logger.warning('weekly_recommendation: bad LLM payload for student %s: %s', student_id, e)
+        return None
+    if not headline or not all(c['text'] for c in cards):
+        logger.warning('weekly_recommendation: empty fields for student %s', student_id)
+        return None
+
+    obj, _ = WeeklyRecommendation.objects.get_or_create(
+        student=student, week_start=week_start,
+        defaults={'headline': headline, 'cards': cards, 'input_digest': digest, 'model_used': DEFAULT_MODEL},
+    )
+    return obj
+
+
+def weekly_recommendation_students():
+    """Students with at least one graded attempt."""
+    from analytics import metrics
+    return (
+        metrics.students()
+        .filter(submissions__status__in=metrics.GRADED_STATUSES)
+        .distinct().order_by('id')
+    )
+
+
+@shared_task
+def weekly_recommendations_task():
+    """Celery beat, Monday morning IST: one recommendation per student with a graded exam."""
+    week_start = current_week_start()
+    made = 0
+    for student_id in weekly_recommendation_students().values_list('id', flat=True):
+        try:
+            if generate_weekly_recommendation(student_id, week_start):
+                made += 1
+        except Exception:  # one student's failure must not stop the rest
+            logger.exception('weekly_recommendation: failed for student %s', student_id)
+    logger.info('weekly_recommendations_task: %s recommendations for week %s', made, week_start)
+    return made

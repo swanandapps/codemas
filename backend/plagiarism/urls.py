@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    PlagiarismFlagListView, PlagiarismFlagReviewView,
+    PlagiarismFlagListView, PlagiarismFlagReviewView, MyReviewsView,
     BehaviouralFlagListView, BehaviouralFlagReviewView,
     PolicyView, PolicyChangelogView, AuditLogView, CodeSimilaritySearchView,
     SubmissionPlagiarismView, MonitoringView,
@@ -10,6 +10,7 @@ from .views import (
 urlpatterns = [
     path('', PlagiarismFlagListView.as_view()),
     path('<int:pk>/review/', PlagiarismFlagReviewView.as_view()),
+    path('mine/', MyReviewsView.as_view()),  # student: reviewed flags + trainer notes
     path('behavioural/', BehaviouralFlagListView.as_view()),
     path('behavioural/<int:pk>/review/', BehaviouralFlagReviewView.as_view()),
     path('policy/', PolicyView.as_view()),

@@ -16,14 +16,12 @@
                     class="search-input"
                 />
                 <select v-model="filters.language">
-                    <option value="">All Languages</option>
-                    <option value="python">Python</option>
+                    <option value="">All languages</option>
                     <option value="javascript">JavaScript</option>
-                    <option value="java">Java</option>
-                    <option value="cpp">C++</option>
+                    <option value="python">Python</option>
                 </select>
                 <select v-model="filters.status">
-                    <option value="">All Statuses</option>
+                    <option value="">All statuses</option>
                     <option value="passed">Passed</option>
                     <option value="failed">Failed</option>
                     <option value="running">Running</option>
@@ -41,7 +39,8 @@
         <div v-else-if="submissions.length === 0" class="state-msg">No submissions match your filters.</div>
 
         <div v-else>
-            <div class="results-meta">{{ totalCount }} submission{{ totalCount !== 1 ? 's' : '' }} found</div>
+            <div class="results-meta">{{ plural(totalCount, 'submission') }} found</div>
+            <div class="table-scroll">
             <div class="submissions-table">
                 <div class="table-header">
                     <span>Student</span>
@@ -53,9 +52,9 @@
                     <span>Code</span>
                 </div>
                 <div v-for="s in submissions" :key="s.id" class="table-row">
-                    <span class="col-student" @click="$router.push(`/dashboard/students/${s.student_id}`)">
+                    <button type="button" class="col-student" @click="$router.push(`/dashboard/students/${s.student_id}`)">
                         {{ s.student_username }}
-                    </span>
+                    </button>
                     <span class="col-question">{{ s.question_title }}</span>
                     <span class="col-exam">{{ s.exam_title }}</span>
                     <span class="col-lang">
@@ -64,12 +63,13 @@
                     <span class="col-status">
                         <span :class="['status-chip', s.status]">{{ s.status }}</span>
                     </span>
-                    <span class="col-time">{{ fmtDate(s.submitted_at) }}</span>
+                    <span class="col-time">{{ formatDateTime(s.submitted_at) }}</span>
                     <span class="col-code">
                         <button class="code-btn" @click="openCode(s.id)">View</button>
                         <button class="code-btn details-btn" @click="$router.push(`/dashboard/submissions/${s.id}`)">Details</button>
                     </span>
                 </div>
+            </div>
             </div>
 
             <div class="pagination-row" v-if="totalCount > 20">
@@ -83,8 +83,13 @@
         <div v-if="codeModal" class="modal-overlay" @click.self="codeModal = null">
             <div class="code-modal">
                 <div class="modal-header">
-                    <span>{{ codeModal.student_username }} · {{ codeModal.question_title }}</span>
-                    <button class="close-btn" @click="codeModal = null">✕</button>
+                    <span class="modal-header-meta">
+                        <span>{{ codeModal.student_username }}</span>
+                        <span>{{ codeModal.question_title }}</span>
+                    </span>
+                    <button class="close-btn" @click="codeModal = null" aria-label="Close">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
                 </div>
                 <div class="modal-meta">
                     <span :class="['status-chip', codeModal.status]">{{ codeModal.status }}</span>
@@ -101,6 +106,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import api from '../api'
+import { formatDateTime, plural } from '../utils/format'
 
 interface Submission {
     id: number
@@ -127,10 +133,6 @@ const codeModal = ref<Submission | null>(null)
 const filters = reactive({ search: '', language: '', status: '' })
 
 onMounted(load)
-
-function fmtDate(d: string): string {
-    return new Date(d).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
 
 async function load() {
     loading.value = true
@@ -189,10 +191,11 @@ async function openCode(id: number) {
 .filters-row select { width: 150px; }
 .search-btn {
     padding: 10px 20px;
-    background: var(--red);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-ink);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-display);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -200,10 +203,10 @@ async function openCode(id: number) {
 .search-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .reset-btn {
     padding: 10px 16px;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-pill);
+    color: var(--text);
     font-size: 13px;
     cursor: pointer;
 }
@@ -213,11 +216,13 @@ async function openCode(id: number) {
 .state-msg.hint { color: var(--text-dim); }
 .results-meta { font-size: 13px; color: var(--text-muted); margin-bottom: 12px; }
 
+.table-scroll { overflow-x: auto; }
 .submissions-table {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
+    min-width: 820px;
 }
 .table-header, .table-row {
     display: grid;
@@ -229,8 +234,6 @@ async function openCode(id: number) {
 .table-header {
     font-size: 11px;
     font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     color: var(--text-dim);
     background: var(--surface2);
     border-bottom: 1px solid var(--border);
@@ -238,7 +241,7 @@ async function openCode(id: number) {
 .table-row { border-bottom: 1px solid var(--border); font-size: 13px; }
 .table-row:last-child { border-bottom: none; }
 .table-row:hover { background: var(--surface2); }
-.col-student { font-weight: 600; color: var(--red); cursor: pointer; }
+.col-student { font-weight: 600; color: var(--accent-hover); cursor: pointer; background: none; border: none; padding: 0; font-size: 13px; text-align: left; font-family: inherit; min-height: 40px; }
 .col-student:hover { text-decoration: underline; }
 .col-question { color: var(--text); }
 .col-exam { color: var(--text-muted); font-size: 12px; }
@@ -251,33 +254,32 @@ async function openCode(id: number) {
     border: 1px solid var(--border);
     border-radius: 10px;
     color: var(--text-muted);
-    font-family: monospace;
+    font-family: var(--font-mono);
 }
 .status-chip {
     font-size: 11px;
     font-weight: 700;
-    text-transform: uppercase;
     padding: 2px 8px;
     border-radius: 10px;
 }
-.status-chip.passed { background: rgba(46,204,113,0.1); color: var(--green); }
-.status-chip.failed { background: var(--red-dim); color: var(--red); }
-.status-chip.running { background: rgba(241,196,15,0.1); color: var(--yellow); }
+.status-chip.passed { background: var(--green-dim); color: var(--green-ink); }
+.status-chip.failed { background: var(--red-dim); color: var(--red-ink); }
+.status-chip.running { background: var(--yellow-dim); color: var(--amber-ink); }
 .status-chip.pending { background: var(--surface3); color: var(--text-dim); }
 
 .code-btn {
     padding: 4px 10px;
     background: var(--surface2);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
     color: var(--text-muted);
     font-size: 12px;
     cursor: pointer;
 }
 .code-btn:hover { color: var(--text); }
 .col-code { display: flex; gap: 6px; }
-.details-btn { border-color: var(--red); color: var(--red); }
-.details-btn:hover { background: var(--red-dim); color: var(--red); }
+.details-btn { border-color: var(--accent); color: var(--accent-hover); }
+.details-btn:hover { background: var(--accent-tint); color: var(--accent-hover); }
 
 .pagination-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .page-btn {
@@ -295,7 +297,7 @@ async function openCode(id: number) {
 .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.6);
+    background: rgba(33,25,27,0.4);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -309,6 +311,7 @@ async function openCode(id: number) {
     max-height: 80vh;
     display: flex;
     flex-direction: column;
+    box-shadow: var(--shadow-lg);
 }
 .modal-header {
     display: flex;
@@ -320,6 +323,7 @@ async function openCode(id: number) {
     font-weight: 600;
     color: var(--text);
 }
+.modal-header-meta { display: flex; align-items: center; gap: 8px; }
 .close-btn {
     background: transparent;
     border: none;
@@ -342,9 +346,21 @@ async function openCode(id: number) {
     padding: 20px;
     font-size: 13px;
     line-height: 1.6;
-    color: var(--text);
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    background: var(--code-bg);
+    color: var(--code-text);
+    font-family: var(--font-mono);
     white-space: pre-wrap;
     word-break: break-all;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+    .filters-row { flex-direction: column; align-items: stretch; }
+    .filters-row select { width: 100%; }
+    .search-input { min-width: 0; }
+}
+
+@media (max-width: 600px) {
+    .code-modal { width: calc(100vw - 32px); }
 }
 </style>

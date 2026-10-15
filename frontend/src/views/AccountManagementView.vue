@@ -2,17 +2,17 @@
     <div class="accounts-page">
         <div class="page-header">
             <div>
-                <h1>Account Management</h1>
+                <h1>Account management</h1>
                 <p class="page-sub">Create and manage student accounts</p>
             </div>
-            <button class="create-btn" @click="showForm = !showForm">
-                {{ showForm ? 'Cancel' : '+ New Student' }}
+            <button type="button" class="create-btn" @click="showForm = !showForm">
+                {{ showForm ? 'Cancel' : 'Add student' }}
             </button>
         </div>
 
         <!-- Create form -->
         <div v-if="showForm" class="create-card">
-            <h3>Create Student Account</h3>
+            <h3>Create student account</h3>
             <div class="form-grid">
                 <div class="field">
                     <label>Username</label>
@@ -27,14 +27,14 @@
                     <input v-model="form.password" type="password" placeholder="••••••••" />
                 </div>
                 <div class="field">
-                    <label>Cohort</label>
-                    <input v-model="form.cohort" placeholder="e.g. Batch-A, 2026" />
+                    <label>Section</label>
+                    <input v-model="form.cohort" placeholder="e.g. Section A" />
                 </div>
             </div>
             <div v-if="createError" class="form-error">{{ createError }}</div>
             <div class="form-actions">
                 <button class="submit-btn" @click="createStudent" :disabled="creating">
-                    {{ creating ? 'Creating...' : 'Create Student' }}
+                    {{ creating ? 'Creating...' : 'Create student' }}
                 </button>
             </div>
         </div>
@@ -43,17 +43,20 @@
         <div class="csv-card">
             <div class="csv-header">
                 <div>
-                    <div class="csv-title">Bulk Import via CSV</div>
-                    <div class="csv-sub">CSV format: username,email,password,cohort</div>
+                    <div class="csv-title">Import from CSV</div>
+                    <div class="csv-sub">CSV format: username,email,password,cohort (the cohort column holds the section, e.g. Section A)</div>
                 </div>
                 <label class="csv-btn">
-                    Choose File
+                    Choose file
                     <input type="file" accept=".csv" @change="handleCSV" style="display:none" />
                 </label>
             </div>
             <div v-if="csvResults.length" class="csv-results">
                 <div v-for="r in csvResults" :key="r.username" :class="['csv-row', r.ok ? 'ok' : 'fail']">
-                    <span class="csv-icon">{{ r.ok ? '✓' : '✗' }}</span>
+                    <span class="csv-icon">
+                        <svg v-if="r.ok" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                        <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </span>
                     <span>{{ r.username }}</span>
                     <span class="csv-msg">{{ r.msg }}</span>
                 </div>
@@ -64,7 +67,7 @@
         <div class="filter-row">
             <input v-model="search" placeholder="Search students..." class="search-input" />
             <select v-model="cohortFilter">
-                <option value="">All Cohorts</option>
+                <option value="">All sections</option>
                 <option v-for="c in cohorts" :key="c" :value="c">{{ c }}</option>
             </select>
         </div>
@@ -73,31 +76,33 @@
         <div v-if="loading" class="state-msg">Loading students...</div>
         <div v-else-if="filtered.length === 0" class="state-msg">No students found.</div>
 
-        <div v-else class="students-table">
+        <div v-else class="table-scroll">
+        <div class="students-table">
             <div class="table-header">
                 <span>Username</span>
                 <span>Email</span>
-                <span>Cohort</span>
+                <span>Section</span>
                 <span>Actions</span>
             </div>
             <div v-for="s in filtered" :key="s.id" class="table-row">
                 <span class="col-username">{{ s.username }}</span>
                 <span class="col-email">{{ s.email }}</span>
                 <span class="col-cohort">
-                    <span v-if="editingId !== s.id" class="cohort-val" @click="startEdit(s)">
+                    <button type="button" v-if="editingId !== s.id" class="cohort-val" @click="startEdit(s)">
                         {{ s.cohort || '—' }}
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                    </span>
+                    </button>
                     <span v-else class="cohort-edit">
                         <input v-model="editCohort" @keydown.enter="saveEdit(s.id)" @keydown.esc="editingId = null" style="width:120px; padding:4px 8px;" />
-                        <button class="save-btn" @click="saveEdit(s.id)">Save</button>
+                        <button type="button" class="save-btn" @click="saveEdit(s.id)">Save</button>
                     </span>
                 </span>
                 <span class="col-actions">
-                    <button class="view-btn" @click="$router.push(`/dashboard/students/${s.id}`)">View</button>
-                    <button class="delete-btn" @click="confirmDelete(s)">Delete</button>
+                    <button type="button" class="view-btn" @click="$router.push(`/dashboard/students/${s.id}`)">View</button>
+                    <button type="button" class="delete-btn" @click="confirmDelete(s)">Delete</button>
                 </span>
             </div>
+        </div>
         </div>
 
         <!-- Delete confirm modal -->
@@ -229,10 +234,11 @@ async function handleCSV(e: Event) {
 .page-sub { color: var(--text-dim); font-size: 14px; margin-top: 4px; }
 .create-btn {
     padding: 9px 18px;
-    background: var(--red);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-ink);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-display);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -250,14 +256,15 @@ async function handleCSV(e: Event) {
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 12px; color: var(--text-dim); font-weight: 600; }
-.form-error { color: var(--red); font-size: 13px; margin-top: 8px; }
+.form-error { color: var(--red-ink); font-size: 13px; margin-top: 8px; }
 .form-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
 .submit-btn {
     padding: 9px 22px;
-    background: var(--red);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-ink);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-display);
     font-weight: 600;
     font-size: 13px;
     cursor: pointer;
@@ -273,7 +280,7 @@ async function handleCSV(e: Event) {
 }
 .csv-header { display: flex; justify-content: space-between; align-items: center; }
 .csv-title { font-size: 14px; font-weight: 600; color: var(--text); }
-.csv-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; font-family: monospace; }
+.csv-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; font-family: var(--font-mono); }
 .csv-btn {
     padding: 8px 16px;
     background: var(--surface2);
@@ -287,11 +294,11 @@ async function handleCSV(e: Event) {
 .csv-btn:hover { border-color: var(--border2); color: var(--text); }
 .csv-results { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
 .csv-row { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 6px 10px; border-radius: var(--radius-sm); }
-.csv-row.ok { background: rgba(46,204,113,0.08); }
+.csv-row.ok { background: var(--green-dim); }
 .csv-row.fail { background: var(--red-dim); }
-.csv-icon { font-weight: 700; }
-.csv-row.ok .csv-icon { color: var(--green); }
-.csv-row.fail .csv-icon { color: var(--red); }
+.csv-icon { display: inline-flex; align-items: center; }
+.csv-row.ok .csv-icon { color: var(--green-ink); }
+.csv-row.fail .csv-icon { color: var(--red-ink); }
 .csv-msg { color: var(--text-dim); font-size: 12px; margin-left: auto; }
 
 .filter-row { display: flex; gap: 12px; margin-bottom: 20px; }
@@ -300,7 +307,8 @@ async function handleCSV(e: Event) {
 
 .state-msg { color: var(--text-muted); padding: 40px 0; }
 
-.students-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.table-scroll { overflow-x: auto; }
+.students-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-width: 640px; }
 .table-header, .table-row {
     display: grid;
     grid-template-columns: 1fr 1fr 160px 140px;
@@ -311,8 +319,6 @@ async function handleCSV(e: Event) {
 .table-header {
     font-size: 11px;
     font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     color: var(--text-dim);
     border-bottom: 1px solid var(--border);
     background: var(--surface2);
@@ -329,35 +335,41 @@ async function handleCSV(e: Event) {
     cursor: pointer;
     color: var(--text-muted);
     font-size: 13px;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    min-height: 40px;
 }
 .cohort-val:hover { color: var(--text); }
 .cohort-edit { display: flex; align-items: center; gap: 6px; }
 .save-btn {
     padding: 4px 10px;
-    background: var(--red);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-ink);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
     font-size: 12px;
     cursor: pointer;
 }
 .col-actions { display: flex; gap: 8px; }
 .view-btn, .delete-btn {
     padding: 5px 12px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
 }
-.view-btn { background: var(--surface3); border: 1px solid var(--border); color: var(--text-muted); }
+.view-btn { background: var(--surface); border: 1px solid var(--border2); color: var(--text); }
 .view-btn:hover { color: var(--text); }
-.delete-btn { background: var(--red-dim); border: 1px solid rgba(230,57,70,0.2); color: var(--red); }
-.delete-btn:hover { background: var(--red); color: white; }
+/* Destructive action stays outlined red, never a solid fill, so it never reads as the primary action. */
+.delete-btn { background: var(--surface); border: 1px solid var(--red); color: var(--red-ink); }
+.delete-btn:hover { background: var(--red-dim); }
 
 .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.6);
+    background: rgba(33,25,27,0.4);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -369,28 +381,44 @@ async function handleCSV(e: Event) {
     border-radius: var(--radius);
     padding: 28px;
     width: 400px;
+    box-shadow: var(--shadow-lg);
 }
 .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
 .modal p { font-size: 14px; color: var(--text-muted); margin-bottom: 20px; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .cancel-btn {
     padding: 8px 18px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-pill);
+    color: var(--text);
     cursor: pointer;
     font-size: 13px;
 }
+/* Destructive action stays outlined red, never a solid fill, so it never reads as the primary action. */
 .confirm-delete-btn {
     padding: 8px 18px;
-    background: var(--red);
-    color: white;
-    border: none;
-    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--red-ink);
+    border: 1px solid var(--red);
+    border-radius: var(--radius-pill);
     cursor: pointer;
     font-size: 13px;
     font-weight: 600;
 }
+.confirm-delete-btn:hover:not(:disabled) { background: var(--red-dim); }
 .confirm-delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+    .page-header { flex-wrap: wrap; gap: 12px; }
+    .form-grid { grid-template-columns: 1fr; }
+    .csv-header { flex-wrap: wrap; gap: 10px; }
+    .filter-row { flex-wrap: wrap; }
+    .filter-row select { width: 100%; }
+}
+
+@media (max-width: 600px) {
+    .modal { width: calc(100vw - 32px); }
+}
 </style>

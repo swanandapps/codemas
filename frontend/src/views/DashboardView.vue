@@ -2,223 +2,115 @@
     <div class="dashboard">
         <div class="dash-header">
             <h1>Overview</h1>
-            <div class="tab-row">
-                <button :class="['tab-btn', activeTab === 'overview' ? 'active' : '']" @click="activeTab = 'overview'">
-                    Overview
-                </button>
-                <button :class="['tab-btn', activeTab === 'history' ? 'active' : '']" @click="switchHistory">
-                    Exam History
-                    <span class="tab-count" v-if="exams.length">{{ exams.length }}</span>
-                </button>
-            </div>
         </div>
 
         <div v-if="loading" class="loading">Loading dashboard...</div>
 
         <!-- ── OVERVIEW TAB ──────────────────────────────────────────────── -->
-        <template v-else-if="activeTab === 'overview'">
-            <div class="kpi-grid">
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Students</div>
-                    <div class="kpi-value">{{ data.kpis.total_students }}</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Submissions</div>
-                    <div class="kpi-value">{{ data.kpis.total_submissions }}</div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Overall Pass Rate</div>
-                    <div class="kpi-value" :class="rateColor(data.kpis.pass_rate)">
-                        {{ data.kpis.pass_rate }}%
-                    </div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Pending Flags</div>
-                    <div class="kpi-value" :class="data.kpis.plagiarism_flags > 0 ? 'warn' : 'good'">
-                        {{ data.kpis.plagiarism_flags }}
-                    </div>
-                </div>
-            </div>
+        <template v-else>
+            <div v-if="loadingHealth" class="loading">Loading overview...</div>
 
-            <div class="chart-row">
-                <div class="chart-card half">
-                    <h3>Pass Rate by Question</h3>
-                    <apexchart type="bar" height="340" :options="passRateOptions" :series="passRateSeries" />
+            <template v-else>
+                <div class="overview-head">
+                    <p class="overview-summary">{{ summarySentence }}</p>
                 </div>
-                <div class="chart-card half">
-                    <h3>Avg Execution Time (ms)</h3>
-                    <apexchart type="bar" height="340" :options="execTimeOptions" :series="execTimeSeries" />
-                </div>
-                <div class="chart-card narrow">
-                    <h3>Language Distribution</h3>
-                    <apexchart type="donut" height="260" :options="langOptions" :series="langSeries" />
-                </div>
-            </div>
+                <!-- live counts of what waits on a trainer (the same as the sidebar badges) -->
+                <p v-if="waiting.appeals || waiting.cases" class="waiting-line">
+                    <template v-if="waiting.appeals"><RouterLink to="/dashboard/support/disputes">{{ plural(waiting.appeals, 'appeal') }}</RouterLink></template>
+                    <template v-if="waiting.appeals && waiting.cases"> and </template>
+                    <template v-if="waiting.cases"><RouterLink to="/dashboard/plagiarism/cohorts">{{ plural(waiting.cases, 'case') }}</RouterLink></template>
+                    waiting for you
+                </p>
 
-            <div class="chart-card full" v-if="data.cohort_comparison.length > 0">
-                <h3>Cohort Comparison</h3>
-                <apexchart type="bar" height="220" :options="cohortOptions" :series="cohortSeries" />
-            </div>
-
-            <div class="table-row">
-                <div class="table-card">
-                    <h3>Top Performers</h3>
-                    <table class="mini-table">
-                        <thead><tr><th>Student</th><th>Cohort</th><th>Pass Rate</th><th>Submissions</th></tr></thead>
-                        <tbody>
-                            <tr v-for="s in data.top_performers" :key="s.student_id" class="clickable" @click="router.push(`/dashboard/students/${s.student_id}`)">
-                                <td><strong>{{ s.username }}</strong></td>
-                                <td>{{ s.cohort || '—' }}</td>
-                                <td><span class="rate good">{{ s.pass_rate }}%</span></td>
-                                <td>{{ s.total_submissions }}</td>
-                            </tr>
-                            <tr v-if="data.top_performers.length === 0"><td colspan="4" class="empty-row">No data yet</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div class="table-card">
-                    <h3>Needs Attention <span class="sub-label">(&lt;40% pass rate)</span></h3>
-                    <table class="mini-table">
-                        <thead><tr><th>Student</th><th>Cohort</th><th>Pass Rate</th><th>Flags</th></tr></thead>
-                        <tbody>
-                            <tr v-for="s in data.struggling_students" :key="s.student_id" class="clickable" @click="router.push(`/dashboard/students/${s.student_id}`)">
-                                <td><strong>{{ s.username }}</strong></td>
-                                <td>{{ s.cohort || '—' }}</td>
-                                <td><span class="rate low">{{ s.pass_rate }}%</span></td>
-                                <td>
-                                    <span v-if="s.plagiarism_flags > 0" class="flag-warn">⚠ {{ s.plagiarism_flags }}</span>
-                                    <span v-else class="flag-ok">✓</span>
-                                </td>
-                            </tr>
-                            <tr v-if="data.struggling_students.length === 0"><td colspan="4" class="empty-row">All students above 40%</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </template>
-
-        <!-- ── HISTORY TAB ───────────────────────────────────────────────── -->
-        <template v-else-if="activeTab === 'history'">
-            <div v-if="loadingHistory" class="loading">Loading exam history...</div>
-
-            <div v-else class="history-list">
-                <div v-for="exam in exams" :key="exam.exam_id" class="exam-card">
-                    <!-- Exam header row -->
-                    <div class="exam-header">
-                        <div class="exam-meta">
-                            <div class="exam-title-row">
-                                <span class="exam-title">{{ exam.title }}</span>
-                                <span :class="['exam-status', exam.status]">{{ exam.status }}</span>
-                            </div>
-                            <div class="exam-details">
-                                <span>{{ exam.question_count }} questions</span>
-                                <span class="dot">·</span>
-                                <span>{{ exam.duration_minutes }} min</span>
-                                <span class="dot">·</span>
-                                <span>{{ exam.enrolled }} enrolled</span>
-                                <span class="dot">·</span>
-                                <span v-if="exam.top_language" class="lang-chip-sm">{{ exam.top_language }}</span>
-                                <span v-if="exam.start_time">Started {{ fmtDate(exam.start_time) }}</span>
-                            </div>
-                        </div>
-                        <button class="expand-btn" @click="toggle(exam.exam_id)">
-                            <svg :style="{ transform: expanded.has(exam.exam_id) ? 'rotate(180deg)' : '' }"
-                                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="6 9 12 15 18 9"/>
-                            </svg>
-                        </button>
+                <section class="ch-section" aria-labelledby="ch-heading">
+                    <div class="ch-heading-row">
+                        <h2 id="ch-heading">Section health</h2>
+                        <span class="ch-caption">Based on each section's latest graded exam and the three before it</span>
                     </div>
 
-                    <!-- KPI strip -->
-                    <div class="exam-kpis">
-                        <div class="ekpi">
-                            <div class="ekpi-val">{{ exam.submitters }}<span class="ekpi-denom">/{{ exam.enrolled }}</span></div>
-                            <div class="ekpi-label">Submitted</div>
-                            <div class="ekpi-bar-wrap">
-                                <div class="ekpi-bar sub-bar" :style="{ width: exam.submission_pct + '%' }" />
-                            </div>
-                            <div class="ekpi-pct">{{ exam.submission_pct }}%</div>
-                        </div>
+                    <div v-if="health.cohorts.length === 0" class="empty-box">No section data yet.</div>
 
-                        <div class="ekpi">
-                            <div class="ekpi-val" :class="passClass(exam.pass_pct)">{{ exam.pass_pct }}%</div>
-                            <div class="ekpi-label">Pass Rate</div>
-                            <div class="ekpi-bar-wrap">
-                                <div class="ekpi-bar" :class="'pass-bar-' + passClass(exam.pass_pct)" :style="{ width: exam.pass_pct + '%' }" />
+                    <div v-else class="cohort-grid">
+                        <article v-for="c in health.cohorts" :key="c.cohort" class="cohort-card" @click="router.push(sectionLink(c.cohort))">
+                            <div class="cc-top">
+                                <h3 class="cc-name"><RouterLink :to="sectionLink(c.cohort)" class="cc-name-link" @click.stop>{{ c.cohort }}</RouterLink></h3>
+                                <span :class="['state-pill', c.state]">{{ stateLabel(c.state) }}</span>
+                                <div class="cc-spacer"></div>
+                                <span class="cc-count">{{ plural(c.students, 'student') }}</span>
                             </div>
-                            <div class="ekpi-pct">{{ exam.total_submissions }} submissions</div>
-                        </div>
 
-                        <div class="ekpi">
-                            <div class="ekpi-val" :class="exam.flag_pct > 15 ? 'text-red' : exam.flag_pct > 5 ? 'text-yellow' : 'text-muted'">
-                                {{ exam.flag_pct }}%
-                            </div>
-                            <div class="ekpi-label">Behavioural Flags</div>
-                            <div class="ekpi-bar-wrap">
-                                <div class="ekpi-bar flag-bar" :style="{ width: Math.min(exam.flag_pct * 3, 100) + '%' }" />
-                            </div>
-                            <div class="ekpi-pct">{{ exam.behavioural_flags }} flags</div>
-                        </div>
-
-                        <div class="ekpi">
-                            <div class="ekpi-val" :class="exam.similarity_pairs > 0 ? 'text-red' : 'text-muted'">
-                                {{ exam.similarity_pairs }}
-                            </div>
-                            <div class="ekpi-label">Similarity Pairs</div>
-                            <div class="ekpi-bar-wrap">
-                                <div class="ekpi-bar sim-bar" :style="{ width: Math.min(exam.similarity_pairs * 10, 100) + '%' }" />
-                            </div>
-                            <div class="ekpi-pct">{{ exam.confirmed_plagiarism }} confirmed</div>
-                        </div>
-
-                        <div class="ekpi">
-                            <div class="ekpi-val">{{ fmtSolveTime(exam.avg_solve_s) }}</div>
-                            <div class="ekpi-label">Avg Solve Time</div>
-                            <div class="ekpi-bar-wrap">
-                                <div class="ekpi-bar time-bar" :style="{ width: Math.min((exam.avg_solve_s || 0) / (exam.duration_minutes * 60) * 100, 100) + '%' }" />
-                            </div>
-                            <div class="ekpi-pct">{{ exam.avg_exec_ms ? exam.avg_exec_ms + 'ms exec' : '—' }}</div>
-                        </div>
-
-                        <div class="ekpi hardest-ekpi" v-if="exam.hardest_question">
-                            <div class="hardest-title" :title="exam.hardest_question">{{ exam.hardest_question }}</div>
-                            <div class="ekpi-label">Hardest Question</div>
-                            <div class="ekpi-bar-wrap">
-                                <div class="ekpi-bar" :class="'pass-bar-' + passClass(exam.hardest_pass_rate)" :style="{ width: (exam.hardest_pass_rate || 0) + '%' }" />
-                            </div>
-                            <div class="ekpi-pct">{{ exam.hardest_pass_rate }}% pass</div>
-                        </div>
-                    </div>
-
-                    <!-- Expanded: per-question breakdown -->
-                    <div v-if="expanded.has(exam.exam_id)" class="question-breakdown">
-                        <div class="qb-header">
-                            <span>Question</span>
-                            <span>Difficulty</span>
-                            <span>Attempts</span>
-                            <span>Pass Rate</span>
-                            <span>Behavioural Flags</span>
-                            <span>Test Cases</span>
-                        </div>
-                        <div v-for="q in exam.questions" :key="q.question_id" class="qb-row">
-                            <span class="qb-title">{{ q.title }}</span>
-                            <span :class="['diff-chip', q.difficulty]">{{ q.difficulty }}</span>
-                            <span class="qb-val">{{ q.total_attempts }}</span>
-                            <span class="qb-pass">
-                                <div class="inline-bar-wrap">
-                                    <div class="inline-bar" :class="'pass-bar-' + passClass(q.pass_rate)" :style="{ width: q.pass_rate + '%' }" />
+                            <div v-if="c.latest" class="cc-stat-row">
+                                <div class="cc-latest">
+                                    <div class="cc-latest-top">
+                                        <span class="cc-latest-num">{{ formatPct(c.latest.accepted_rate) }}</span>
+                                        <span v-if="c.delta !== null && c.delta !== undefined" :class="['delta-chip', deltaClass(c.delta)]">{{ deltaLabel(c) }}</span>
+                                    </div>
+                                    <span class="cc-latest-caption" :title="METRIC_HELP.accepted">Success rate, latest graded exam</span>
                                 </div>
-                                <span :class="['qb-pct', passClass(q.pass_rate)]">{{ q.pass_rate }}%</span>
-                            </span>
-                            <span class="qb-val" :class="q.flag_count > 0 ? 'text-red' : 'text-muted'">
-                                {{ q.flag_count > 0 ? '⚠ ' + q.flag_count : '—' }}
-                            </span>
-                            <span class="qb-val text-muted">{{ q.test_case_count }}</span>
+                                <div class="cc-spark">
+                                    <svg :width="SPARK_W" :height="SPARK_H" :viewBox="`0 0 ${SPARK_W} ${SPARK_H}`" role="img" :aria-label="sparkline(c.series).label">
+                                        <line x1="0" :y1="sparkline(c.series).y55" :x2="SPARK_W" :y2="sparkline(c.series).y55" stroke="var(--surface3)" stroke-width="1" stroke-dasharray="3 3" />
+                                        <polyline :points="sparkline(c.series).points" fill="none" stroke="var(--text)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+                                        <circle :cx="sparkline(c.series).lastX" :cy="sparkline(c.series).lastY" r="4" fill="var(--accent)" />
+                                    </svg>
+                                    <span class="cc-spark-caption">Success rate, last {{ c.series.length }} exams</span>
+                                </div>
+                            </div>
+
+                            <div class="cc-bands">
+                                <div class="band-bar" role="img" :aria-label="bandLabel(c.bands)">
+                                    <span class="band-seg thriving" :style="{ flex: bandFlex(c.bands, 'thriving') }"></span>
+                                    <span class="band-seg steady" :style="{ flex: bandFlex(c.bands, 'steady') }"></span>
+                                    <span class="band-seg struggling" :style="{ flex: bandFlex(c.bands, 'struggling') }"></span>
+                                </div>
+                                <div class="band-legend">
+                                    <span><span class="dot thriving"></span>{{ c.bands.thriving }} thriving</span>
+                                    <span><span class="dot steady"></span>{{ c.bands.steady }} steady</span>
+                                    <span><span class="dot struggling"></span>{{ c.bands.struggling }} struggling</span>
+                                </div>
+                            </div>
+
+                            <div v-if="c.latest" class="cc-footer">
+                                <div class="cc-foot-stat">
+                                    <span class="cc-foot-label" :title="METRIC_HELP.took">Took the exam</span>
+                                    <span class="cc-foot-val mono">{{ c.latest.took }} of {{ c.latest.enrolled }}</span>
+                                </div>
+                                <div class="cc-foot-stat">
+                                    <span class="cc-foot-label" :title="METRIC_HELP.flagged">Flagged students</span>
+                                    <span class="cc-foot-val mono" :class="flagClass(c.latest.flagged_students_rate)">{{ formatPct(c.latest.flagged_students_rate) }}</span>
+                                </div>
+                                <div class="cc-foot-stat">
+                                    <span class="cc-foot-label" :title="METRIC_HELP.toReview">Flags to review</span>
+                                    <button type="button" class="cc-foot-link mono" @click.stop="router.push('/dashboard/plagiarism/cohorts')">{{ c.flags_to_review }}</button>
+                                </div>
+                            </div>
+
+                            <p v-if="c.state !== 'on_track'" class="cc-reason">{{ reasonSentence(c) }}</p>
+                        </article>
+                    </div>
+                </section>
+
+                <section class="help-section" aria-labelledby="help-heading">
+                    <div class="section-head help-head">
+                        <h2 id="help-heading">Students who need help</h2>
+                        <span class="ch-caption" :title="METRIC_HELP.acceptedStudent">Success rate below 40% across all exams</span>
+                    </div>
+                    <div v-if="health.students_needing_help.length === 0" class="empty-box">No students with a success rate below 40%.</div>
+                    <div v-else>
+                        <div v-for="s in health.students_needing_help" :key="s.student_id" class="help-row">
+                            <span class="help-name">{{ s.username }}</span>
+                            <span class="mono help-rate">{{ formatPct(s.accepted_rate) }}</span>
+                            <span class="help-meta">{{ s.cohort || '—' }}{{ s.flags > 0 ? ', ' + plural(s.flags, 'flag') : '' }}</span>
+                            <button type="button" class="help-link" @click="router.push(`/dashboard/students/${s.student_id}`)">View student</button>
                         </div>
                     </div>
-                </div>
-            </div>
+                </section>
+
+
+                <p class="rules-note">{{ rulesSentence }}</p>
+            </template>
         </template>
+
     </div>
 </template>
 
@@ -226,344 +118,269 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
+import { formatDate, formatPct, plural } from '../utils/format'
+import { METRIC_HELP } from '../utils/metrics'
+import { attention, loadAttention } from '../utils/attention'
 
 const router = useRouter()
+// A section card opens the Students page filtered to that section
+const sectionLink = (section: string) => ({ name: 'students', query: { section } })
 const loading = ref(true)
-const loadingHistory = ref(false)
-const activeTab = ref<'overview' | 'history'>('overview')
-const exams = ref<any[]>([])
-const expanded = ref<Set<number>>(new Set())
-let historyLoaded = false
+const loadingHealth = ref(true)
 
-const data = ref<any>({
-    kpis: { total_students: 0, total_submissions: 0, pass_rate: 0, plagiarism_flags: 0 },
-    question_stats: [],
-    language_distribution: {},
-    cohort_comparison: [],
-    top_performers: [],
-    struggling_students: [],
+const health = ref<any>({
+    summary: { students: 0, cohorts: 0, unassigned_students: 0, latest_exam: null },
+    cohorts: [],
+    students_needing_help: [],
+    rules: { at_risk: {}, watch: {} },
 })
+
+const waiting = computed(() => ({
+    appeals: attention.data?.open_appeals ?? 0,
+    cases: attention.data?.cases_to_decide ?? 0,
+}))
 
 onMounted(async () => {
+    loadAttention()   // shared with the sidebar's badge request
     try {
-        const res = await api.get('/dashboard/')
-        data.value = res.data
+        const res = await api.get('/dashboard/health/')
+        health.value = res.data
     } finally {
         loading.value = false
+        loadingHealth.value = false
     }
 })
 
-async function switchHistory() {
-    activeTab.value = 'history'
-    if (historyLoaded) return
-    loadingHistory.value = true
-    try {
-        const res = await api.get('/dashboard/exams/')
-        exams.value = res.data
-        historyLoaded = true
-    } finally {
-        loadingHistory.value = false
-    }
-}
+// ── Overview: summary sentence ──────────────────────────────────────────────
 
-function toggle(id: number) {
-    if (expanded.value.has(id)) expanded.value.delete(id)
-    else expanded.value.add(id)
-    expanded.value = new Set(expanded.value)
-}
-
-function rateColor(rate: number) {
-    return rate >= 70 ? 'good' : rate >= 40 ? 'mid' : 'warn'
-}
-
-function passClass(rate: number) {
-    return rate >= 65 ? 'good' : rate >= 40 ? 'mid' : 'low'
-}
-
-function fmtDate(d: string) {
-    return new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function fmtSolveTime(s: number | null) {
-    if (!s) return '—'
-    const m = Math.floor(s / 60)
-    const sec = Math.round(s % 60)
-    return m > 0 ? `${m}m ${sec}s` : `${sec}s`
-}
-
-// ── Chart computed ────────────────────────────────────────────────────────────
-
-const langSeries = computed(() => Object.values(data.value.language_distribution) as number[])
-const langOptions = computed(() => ({
-    labels: Object.keys(data.value.language_distribution),
-    colors: ['#2ecc71', '#3498db', '#e63946'],
-    legend: { position: 'bottom' },
-    theme: { mode: 'dark' },
-    chart: { background: 'transparent' },
-    dataLabels: { style: { fontSize: '12px' } },
-    plotOptions: { pie: { donut: { size: '60%' } } },
-}))
-
-// Deduplicate questions by title across exams — average the pass rate
-const dedupedQuestionStats = computed(() => {
-    const map = new Map<string, any>()
-    for (const q of data.value.question_stats) {
-        if (map.has(q.question_title)) {
-            const e = map.get(q.question_title)
-            e._count++
-            e._pass_sum += q.pass_rate
-            e._exec_sum += (q.avg_execution_time || 0)
-            e.pass_rate = Math.round(e._pass_sum / e._count)
-            e.avg_execution_time = Math.round(e._exec_sum / e._count)
-        } else {
-            map.set(q.question_title, { ...q, _count: 1, _pass_sum: q.pass_rate, _exec_sum: q.avg_execution_time || 0 })
-        }
-    }
-    return Array.from(map.values()).sort((a, b) => b.pass_rate - a.pass_rate)
+const summarySentence = computed(() => {
+    const s = health.value.summary
+    const cohortPart = s.cohorts > 0 ? ` in ${plural(s.cohorts, 'section')}` : ''
+    const examPart = s.latest_exam ? ` Latest graded exam: ${s.latest_exam.title}, ${formatDate(s.latest_exam.start_time)}.` : ''
+    return `${plural(s.students, 'student')}${cohortPart}.${examPart}`
 })
 
-const passRateSeries = computed(() => [{ name: 'Pass Rate %', data: dedupedQuestionStats.value.map((q: any) => q.pass_rate) }])
-const passRateOptions = computed(() => ({
-    chart: { toolbar: { show: false }, background: 'transparent' },
-    theme: { mode: 'dark' },
-    colors: ['#2ecc71'],
-    plotOptions: { bar: { borderRadius: 4, horizontal: true } },
-    xaxis: { max: 100, categories: dedupedQuestionStats.value.map((q: any) => q.question_title), labels: { formatter: (v: number) => v + '%', style: { fontSize: '11px' } } },
-    yaxis: { labels: { style: { fontSize: '11px' } } },
-    dataLabels: { formatter: (v: number) => v + '%' },
-    grid: { borderColor: '#2a2a2a' },
-}))
+// ── Overview: cohort health cards ───────────────────────────────────────────
 
-const execTimeSeries = computed(() => [{ name: 'Avg Exec Time (ms)', data: dedupedQuestionStats.value.map((q: any) => q.avg_execution_time) }])
-const execTimeOptions = computed(() => ({
-    chart: { toolbar: { show: false }, background: 'transparent' },
-    theme: { mode: 'dark' },
-    colors: ['#3498db'],
-    plotOptions: { bar: { borderRadius: 4 } },
-    xaxis: { categories: dedupedQuestionStats.value.map((q: any) => q.question_title), labels: { style: { fontSize: '11px' }, rotate: -25 } },
-    dataLabels: { formatter: (v: number) => v + 'ms' },
-    grid: { borderColor: '#2a2a2a' },
-}))
+const STATE_LABELS: Record<string, string> = { on_track: 'On track', watch: 'Watch', at_risk: 'At risk' }
+function stateLabel(state: string) {
+    return STATE_LABELS[state] || state
+}
 
-const cohortSeries = computed(() => [
-    { name: 'Pass Rate %', data: data.value.cohort_comparison.map((c: any) => c.pass_rate) },
-    { name: 'Students', data: data.value.cohort_comparison.map((c: any) => c.student_count) },
-])
-const cohortOptions = computed(() => ({
-    chart: { toolbar: { show: false }, background: 'transparent' },
-    theme: { mode: 'dark' },
-    colors: ['#2ecc71', '#3498db'],
-    xaxis: { categories: data.value.cohort_comparison.map((c: any) => c.cohort) },
-    plotOptions: { bar: { borderRadius: 4, columnWidth: '50%' } },
-    dataLabels: { enabled: false },
-    legend: { position: 'top' },
-    grid: { borderColor: '#2a2a2a' },
-}))
+// Change against the average of up to three exams before the latest one.
+function deltaLabel(c: { delta: number | null; series: unknown[] }) {
+    if (c.delta === null || c.delta === undefined) return ''
+    const prev = Math.min(3, Math.max(0, c.series.length - 1))
+    const sign = c.delta >= 0 ? '+' : ''
+    return `${sign}${c.delta.toFixed(1)} vs last ${plural(prev, 'exam')}`
+}
+
+function deltaClass(delta: number | null) {
+    return delta !== null && delta <= -8 ? 'bad' : 'neutral'
+}
+
+// Same thresholds the server uses for health (echoed back as `rules`).
+function flagClass(rate: number | null) {
+    const r = health.value.rules
+    if (rate === null || rate === undefined) return 'text-muted'
+    if (rate >= (r?.at_risk?.flagged_students_pct ?? 50)) return 'text-red'
+    if (rate >= (r?.watch?.flagged_students_pct ?? 30)) return 'text-amber'
+    return 'text-muted'
+}
+
+interface Bands { thriving: number; steady: number; struggling: number; no_submissions: number }
+
+function bandFlex(bands: Bands, key: 'thriving' | 'steady' | 'struggling') {
+    const total = bands.thriving + bands.steady + bands.struggling
+    if (!total) return '0 0 0%'
+    return `0 0 ${(100 * bands[key] / total).toFixed(1)}%`
+}
+
+function bandLabel(bands: Bands) {
+    return `${bands.thriving} thriving, ${bands.steady} steady, ${bands.struggling} struggling`
+}
+
+const SPARK_W = 180
+const SPARK_H = 48
+const SPARK_PAD = 6
+
+// Scales a cohort's accepted-% series into the sparkline viewbox, always
+// keeping the 55% reference line inside the visible range.
+function sparkline(series: Array<{ accepted_rate: number | null }>) {
+    const values = series.map((s) => s.accepted_rate).filter((v): v is number => v !== null && v !== undefined)
+    if (values.length === 0) {
+        return { points: '', lastX: 0, lastY: 0, y55: SPARK_H / 2, label: 'No exam data yet' }
+    }
+    const lo = Math.min(...values, 55) - 5
+    const hi = Math.max(...values, 55) + 5
+    const y = (v: number) => (SPARK_H - SPARK_PAD - ((v - lo) / (hi - lo)) * (SPARK_H - 2 * SPARK_PAD)).toFixed(1)
+    const step = values.length > 1 ? (SPARK_W - 2 * SPARK_PAD) / (values.length - 1) : 0
+    const pts = values.map((v, i) => `${(SPARK_PAD + i * step).toFixed(1)},${y(v)}`)
+    const lastPoint = pts[pts.length - 1] ?? '0,0'
+    const [lastX, lastY] = lastPoint.split(',')
+    return {
+        points: pts.join(' '),
+        lastX: lastX ?? '0',
+        lastY: lastY ?? '0',
+        y55: y(55),
+        label: `Success rate over the last ${values.length} exams: ${values.join(', ')} percent`,
+    }
+}
+
+function reasonSentence(c: any) {
+    const prefix = c.state === 'at_risk' ? 'At risk' : 'Watch'
+    const reasons = c.reasons as string[]
+    if (reasons.length === 0) return ''
+    if (reasons.length === 1) return `${prefix}: ${reasons[0]}.`
+    const head = reasons.slice(0, -1).join(', ')
+    const tail = reasons[reasons.length - 1]
+    return `${prefix}: ${head}, and ${tail}.`
+}
+
+// ── Overview: "how health is decided" ───────────────────────────────────────
+
+const rulesSentence = computed(() => {
+    const r = health.value.rules
+    if (!r?.at_risk || !r?.watch) return ''
+    const a = r.at_risk
+    const w = r.watch
+    return (
+        `How health is decided. At risk: latest graded exam success rate under ${a.latest_accepted_pct}%, ` +
+        `at least ${a.struggling_share_pct}% of students struggling, at least ${a.flagged_students_pct}% of students ` +
+        `who took the latest graded exam flagged, or fewer than ${a.participation_pct}% of enrolled students taking it. ` +
+        `Watch: success rate under ${w.latest_accepted_pct}%, a drop of ${Math.abs(w.delta_pts)} points or more against ` +
+        `the previous three exams, at least ${w.struggling_share_pct}% of students struggling, at least ` +
+        `${w.flagged_students_pct}% of students flagged, or fewer than ${w.participation_pct}% taking it. Otherwise on track.`
+    )
+})
 </script>
 
 <style scoped>
 .dashboard { max-width: 1100px; }
 .dash-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-h1 { margin: 0; }
-h3 { margin: 0 0 16px; font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+h1 { margin: 0; font-size: 32px; font-weight: 600; }
+h2 { margin: 0; font-size: 18px; font-weight: 600; color: var(--text); }
+h3 { margin: 0 0 16px; font-size: 18px; font-weight: 600; color: var(--text); }
 
-.tab-row { display: flex; gap: 4px; }
-.tab-btn {
-    padding: 8px 18px;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.15s;
-}
-.tab-btn:hover { color: var(--text); border-color: var(--border2); }
-.tab-btn.active { background: var(--red-dim); border-color: var(--red); color: var(--red); }
-.tab-count { background: var(--surface2); padding: 1px 6px; border-radius: 8px; font-size: 11px; }
 
-.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-.kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; }
-.kpi-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-bottom: 8px; }
-.kpi-value { font-size: 36px; font-weight: 700; color: var(--text); }
-.kpi-value.good { color: var(--green); }
-.kpi-value.mid { color: var(--yellow); }
-.kpi-value.warn { color: var(--red); }
-
-.chart-row { display: flex; gap: 16px; margin-bottom: 16px; }
-.chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
-.chart-card.wide { flex: 2; }
-.chart-card.narrow { flex: 1; }
-.chart-card.half { flex: 1; }
-.chart-card.full { margin-bottom: 16px; }
-
-.table-row { display: flex; gap: 16px; margin-bottom: 16px; }
-.table-card { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
-.mini-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.mini-table th { padding: 8px 10px; text-align: left; font-size: 11px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); }
-.mini-table td { padding: 10px 10px; border-bottom: 1px solid var(--border); color: var(--text-muted); }
-.mini-table td strong { color: var(--text); }
-.mini-table tr:last-child td { border-bottom: none; }
-.clickable { cursor: pointer; }
-.clickable:hover td { background: var(--surface2); }
-.rate { font-weight: 700; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
-.rate.good { background: rgba(46,204,113,0.12); color: var(--green); }
-.rate.low { background: var(--red-dim); color: var(--red); }
-.flag-warn { color: var(--yellow); font-weight: 600; }
-.flag-ok { color: var(--green); }
-.empty-row { color: var(--text-dim); text-align: center; padding: 16px !important; }
-.sub-label { font-size: 11px; color: var(--text-dim); font-weight: normal; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .loading { color: var(--text-muted); padding: 40px 0; }
 
-/* ── History tab ──────────────────────────────────────────────────────────── */
-.history-list { display: flex; flex-direction: column; gap: 16px; }
+/* ── Overview: header ────────────────────────────────────────────────────── */
+.overview-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
+.overview-summary { margin: 0; font-size: 15px; color: var(--text-muted); }
+.waiting-line { margin: -20px 0 28px; font-size: 15px; font-weight: 500; color: var(--text); }
+.waiting-line a { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; }
 
-.exam-card {
+.ch-section { display: flex; flex-direction: column; gap: 16px; margin-bottom: 28px; }
+.ch-heading-row { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; }
+.ch-caption { font-size: 13px; color: var(--text-muted); }
+
+.empty-box { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px; color: var(--text-muted); font-size: 14px; }
+
+/* ── Overview: cohort health cards ───────────────────────────────────────── */
+.cohort-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.cohort-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    transition: border-color 0.15s;
-}
-.exam-card:hover { border-color: var(--border2); }
-
-.exam-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 18px 20px 14px;
-    border-bottom: 1px solid var(--border);
-}
-.exam-title-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.exam-title { font-size: 16px; font-weight: 700; color: var(--text); }
-.exam-status {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 3px 8px;
-    border-radius: 10px;
-}
-.exam-status.ended  { background: var(--surface3); color: var(--text-dim); }
-.exam-status.live   { background: rgba(46,204,113,0.12); color: var(--green); }
-.exam-status.draft  { background: rgba(241,196,15,0.1); color: var(--yellow); }
-.exam-details { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
-.dot { color: var(--border2); }
-.lang-chip-sm {
-    font-size: 11px;
-    font-family: monospace;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1px 7px;
-    color: var(--text-muted);
-}
-.expand-btn {
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 6px 8px;
-    transition: all 0.15s;
-    flex-shrink: 0;
-}
-.expand-btn:hover { border-color: var(--border2); color: var(--text); }
-.expand-btn svg { display: block; transition: transform 0.2s; }
-
-/* KPI strip inside each exam card */
-.exam-kpis {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 0;
-    padding: 0;
-}
-.ekpi {
-    padding: 16px 20px;
-    border-right: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px 24px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 18px;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
 }
-.ekpi:last-child { border-right: none; }
-.ekpi-val { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1; }
-.ekpi-denom { font-size: 13px; color: var(--text-dim); font-weight: 400; }
-.ekpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
-.ekpi-bar-wrap { height: 3px; background: var(--surface3); border-radius: 2px; overflow: hidden; margin: 4px 0; }
-.ekpi-bar { height: 100%; border-radius: 2px; transition: width 0.4s; }
-.ekpi-pct { font-size: 11px; color: var(--text-dim); }
+.cohort-card:hover { border-color: var(--accent); box-shadow: var(--shadow-lg); }
+.cc-name-link { color: inherit; text-decoration: none; }
+.cohort-card:hover .cc-name-link, .cc-name-link:focus-visible { color: var(--accent); }
+.cc-top { display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; }
+.cc-top h3 { margin: 0; font-size: 18px; }
+.cc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; flex-shrink: 0; }
+.cc-spacer { flex-grow: 1; min-width: 0; }
+.cc-count { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 
-.sub-bar  { background: var(--blue, #3498db); }
-.flag-bar { background: var(--red); }
-.sim-bar  { background: var(--yellow); }
-.time-bar { background: var(--blue, #3498db); }
+.state-pill { padding: 4px 12px; border-radius: var(--radius-pill); font-family: var(--font-display); font-size: 13px; font-weight: 600; }
+.state-pill.on_track { background: var(--green-dim); color: var(--green-ink); }
+.state-pill.watch { background: var(--yellow-dim); color: var(--amber-ink); }
+.state-pill.at_risk { background: var(--red-dim); color: var(--red-ink); }
 
-.pass-bar-good { background: var(--green); }
-.pass-bar-mid  { background: var(--yellow); }
-.pass-bar-low  { background: var(--red); }
+.cc-stat-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.cc-latest { display: flex; flex-direction: column; gap: 4px; }
+.cc-latest-top { display: flex; align-items: baseline; gap: 10px; }
+.cc-latest-num { font-family: var(--font-display); font-size: 40px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; color: var(--text); }
+.cc-latest-caption { font-size: 13px; color: var(--text-muted); max-width: 220px; }
 
-.hardest-ekpi .hardest-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 140px;
-}
+.delta-chip { font-family: var(--font-mono); font-size: 13px; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--surface2); color: var(--text); white-space: nowrap; }
+.delta-chip.bad { background: var(--red-dim); color: var(--red-ink); }
 
-.text-red    { color: var(--red) !important; }
-.text-yellow { color: var(--yellow) !important; }
-.text-muted  { color: var(--text-muted) !important; }
-.text-green  { color: var(--green) !important; }
-.good { color: var(--green); }
-.mid  { color: var(--yellow); }
-.low  { color: var(--red); }
+.cc-spark { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.cc-spark-caption { font-size: 12px; color: var(--text-dim); }
 
-/* Question breakdown table */
-.question-breakdown {
-    border-top: 1px solid var(--border);
-    background: var(--surface2);
-}
-.qb-header, .qb-row {
+.cc-bands { display: flex; flex-direction: column; gap: 8px; }
+.band-bar { display: flex; height: 12px; border-radius: var(--radius-pill); overflow: hidden; gap: 2px; background: var(--surface2); }
+.band-seg.thriving { background: var(--green); }
+.band-seg.steady { background: var(--border2); }
+.band-seg.struggling { background: var(--red); }
+.band-legend { display: flex; gap: 16px; font-size: 13px; color: var(--text); }
+.band-legend span { display: flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.thriving { background: var(--green); }
+.dot.steady { background: var(--border2); }
+.dot.struggling { background: var(--red); }
+
+.cc-footer { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
+.cc-foot-stat { display: flex; flex-direction: column; gap: 2px; }
+.cc-foot-label { font-size: 12px; color: var(--text-dim); }
+.cc-foot-val { font-size: 15px; color: var(--text); }
+.cc-foot-link { background: none; border: none; padding: 0; text-align: left; font-size: 15px; font-weight: 500; color: var(--red-ink); cursor: pointer; }
+.cc-foot-link:hover { text-decoration: underline; }
+
+.cc-reason { margin: 0; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--yellow-dim); font-size: 13px; line-height: 1.5; color: var(--amber-ink); }
+
+/* ── Overview: students who need help ───────────────────────────────────── */
+.help-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; margin-bottom: 24px; }
+.section-head { padding: 20px 24px 14px; display: flex; align-items: baseline; justify-content: space-between; }
+.help-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+
+.help-row {
     display: grid;
-    grid-template-columns: 2fr 90px 80px 160px 130px 80px;
-    gap: 12px;
-    padding: 10px 20px;
-    align-items: center;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 12px;
+    padding: 13px 24px;
+    border-top: 1px solid var(--border);
 }
-.qb-header {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-dim);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface3);
+.help-name { font-weight: 500; font-size: 14px; color: var(--text); }
+.help-rate { font-size: 14px; color: var(--red-ink); }
+.help-meta { font-size: 13px; color: var(--text-muted); }
+.help-link { justify-self: end; background: none; border: none; padding: 0; font-family: var(--font-display); font-size: 13px; font-weight: 600; color: var(--red-ink); cursor: pointer; }
+.help-link:hover { text-decoration: underline; }
+
+.rules-note { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); max-width: 100ch; }
+
+.text-red    { color: var(--red-ink) !important; }
+.text-amber  { color: var(--amber-ink) !important; }
+.text-muted  { color: var(--text-muted) !important; }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+    .cohort-grid { grid-template-columns: 1fr; }
+    .dash-header { flex-wrap: wrap; gap: 12px; }
+    .overview-head { flex-wrap: wrap; }
 }
-.qb-row { border-bottom: 1px solid var(--border); font-size: 13px; }
-.qb-row:last-child { border-bottom: none; }
-.qb-title { font-weight: 500; color: var(--text); }
-.qb-val { color: var(--text-muted); }
-.qb-pass { display: flex; align-items: center; gap: 8px; }
-.qb-pct { font-size: 12px; font-weight: 700; flex-shrink: 0; }
-.qb-pct.good { color: var(--green); }
-.qb-pct.mid  { color: var(--yellow); }
-.qb-pct.low  { color: var(--red); }
-.inline-bar-wrap { flex: 1; height: 4px; background: var(--surface3); border-radius: 2px; overflow: hidden; }
-.inline-bar { height: 100%; border-radius: 2px; }
-.diff-chip {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    padding: 2px 8px;
-    border-radius: 10px;
+
+@media (max-width: 600px) {
+    .cc-footer { grid-template-columns: 1fr 1fr; }
+    .ch-heading-row { flex-direction: column; align-items: flex-start; gap: 4px; }
 }
-.diff-chip.easy   { background: rgba(46,204,113,0.12); color: var(--green); }
-.diff-chip.medium { background: rgba(241,196,15,0.1); color: var(--yellow); }
-.diff-chip.hard   { background: var(--red-dim); color: var(--red); }
+
+/* Phone fixes: grid tracks may shrink below their content, and the card's number and chart stack */
+@media (max-width: 899px) {
+    .cohort-grid { grid-template-columns: minmax(0, 1fr); }
+    .cohort-card { min-width: 0; }
+}
+@media (max-width: 600px) {
+    .cc-stat-row { flex-direction: column; align-items: flex-start; }
+    .cc-spark { align-items: flex-start; }
+}
 </style>

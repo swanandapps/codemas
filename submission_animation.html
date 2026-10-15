@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<title>CodeMas — Platform Flows</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CodeMas — Grading Pipeline and Plagiarism Flows</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
 
@@ -243,66 +244,313 @@
     color: #f97316; white-space: nowrap;
   }
 </style>
+<style>
+  /* ── Grading pipeline step-through (section 1). Every class is gp- prefixed so it can't
+        collide with the plagiarism player's styles below. ── */
+  .gp {
+    color-scheme: dark;
+    --bg: #0f1117;
+    --surface: #1a1f2e;
+    --surface-2: #151a27;
+    --border: #2a3045;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --dim: #64748b;
+    --accent: #10b981;
+
+    --browser: #6366f1;  --browser-ink: #a5b4fc;
+    --django: #10b981;   --django-ink: #34d399;
+    --postgres: #8b5cf6; --postgres-ink: #c4b5fd;
+    --relay: #38bdf8;    --relay-ink: #7dd3fc;
+    --sqs: #f59e0b;      --sqs-ink: #fbbf24;
+    --lambda: #e63946;   --lambda-ink: #f87171;
+
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+    max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;
+    color: var(--text); font-family: var(--sans); font-size: 15px; line-height: 1.55;
+  }
+  .gp * { box-sizing: border-box; }
+
+  .gp-header { display: flex; flex-direction: column; gap: 6px; }
+  .gp-header h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; }
+  .gp-header p { margin: 0; color: var(--muted); max-width: 72ch; }
+  .gp-status-note {
+    align-self: flex-start;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 4px 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface-2);
+    font-size: 13px; color: var(--muted);
+  }
+  .gp-status-note b { color: var(--django-ink); font-weight: 600; }
+
+  /* Phase banner */
+  .gp-banner {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 18px; border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+  }
+  .gp-banner .gp-phase {
+    font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 3px 10px; border-radius: 999px; background: var(--surface-2); color: var(--accent);
+    border: 1px solid var(--border);
+  }
+  .gp-banner .gp-title { font-weight: 600; font-size: 16px; }
+  .gp-banner .gp-count { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+  /* Step dots grouped by phase */
+  .gp-controls { display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+  .gp-dot-groups { display: flex; gap: 22px; flex-wrap: wrap; }
+  .gp-dot-group { display: flex; flex-direction: column; gap: 6px; }
+  .gp-dot-group .gp-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+  .gp-dot-group.current .gp-label { color: var(--text); }
+  .gp-dots { display: flex; gap: 6px; }
+  .gp-dot {
+    width: 28px; height: 28px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--muted); font: 600 12px var(--mono); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .gp-dot.done { background: #1d2a2a; color: var(--django-ink); border-color: #24433b; }
+  .gp-dot.active { background: var(--accent); color: #062a1f; border-color: var(--accent); }
+  .gp-buttons { margin-left: auto; display: flex; gap: 8px; }
+  .gp-btn {
+    height: 36px; padding: 0 16px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    font: 500 14px var(--sans);
+  }
+  .gp-btn.primary { background: var(--accent); border-color: var(--accent); color: #062a1f; font-weight: 600; }
+  .gp-btn:disabled { opacity: 0.4; cursor: default; }
+  .gp-dot:focus-visible, .gp-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Diagram */
+  .gp-figure { margin: 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+  .gp-scroll { overflow-x: auto; }
+  .gp svg.gp-seq { display: block; width: 100%; min-width: 820px; height: auto; color: var(--text); }
+  .gp-figure figcaption { margin-top: 10px; font-size: 13px; color: var(--dim); }
+  .gp-msg { opacity: 0.18; transition: opacity 0.25s ease; }
+  .gp-msg.active { opacity: 1; }
+  .gp-msg.done { opacity: 0.45; }
+  .gp-msg.active .gp-shaft { stroke-width: 2.5; stroke-dasharray: 7 5; animation: gp-flow 0.9s linear infinite; }
+  .gp-msg.active .gp-shaft.ret { stroke-dasharray: 3 4; }
+  @keyframes gp-flow { to { stroke-dashoffset: -24; } }
+  @media (prefers-reduced-motion: reduce) {
+    .gp-msg { transition: none; }
+    .gp-msg.active .gp-shaft { animation: none; }
+  }
+
+  /* Detail panel */
+  .gp-detail { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 860px) { .gp-detail { grid-template-columns: minmax(0, 1fr); } }
+  .gp-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .gp-card h2 { margin: 0; font-size: 18px; font-weight: 600; text-wrap: balance; }
+  .gp-route { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+  .gp-chip { padding: 2px 10px; border-radius: 999px; border: 1px solid currentColor; font-weight: 600; font-size: 12px; }
+  .gp-arrow { color: var(--dim); }
+  .gp-k { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); margin: 0; }
+  .gp pre {
+    margin: 0; padding: 12px 14px; border-radius: 10px; overflow-x: auto;
+    background: #0b0e15; border: 1px solid var(--border);
+    font: 13px/1.6 var(--mono); color: #e2e8f0; white-space: pre;
+  }
+  .gp-p { margin: 0; color: var(--muted); }
+  .gp-fail { margin: 0; padding: 10px 12px; border-radius: 10px; background: #2a1518; border: 1px solid #4a1f25; color: #fecaca; font-size: 14px; }
+  .gp-fail b { color: var(--lambda-ink); }
+
+  .gp-states { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .gp-state { padding: 4px 10px; border-radius: 8px; font: 500 12px var(--mono); border: 1px solid var(--border); color: var(--dim); background: var(--surface-2); }
+  .gp-state.on { color: #062a1f; background: var(--accent); border-color: var(--accent); }
+  .gp-state.past { color: var(--django-ink); border-color: #24433b; }
+  .gp-state-sep { color: var(--dim); font-size: 12px; }
+  .gp-side-note { font-size: 13px; color: var(--dim); margin: 0; }
+  .gp-side-note code { font-family: var(--mono); }
+
+  @media (max-width: 640px) {
+    body { padding-left: 16px; padding-right: 16px; }
+    .flow-divider-badge { white-space: normal; text-align: center; }
+    .info-panel { grid-template-columns: minmax(0, 1fr); }
+    .phase-banner { flex-wrap: wrap; }
+    .phase-tagline { flex-basis: 100%; min-width: 0; }
+  }
+</style>
 </head>
 <body>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
-     SECTION 1 — LIVE SUBMISSION PIPELINE
-     Runs for every code submission while the exam is active.
+     SECTION 1 — GRADING PIPELINE (step-through)
+     Runs for every Python or JavaScript submission. C++ and Java still use the
+     legacy Celery task. Kept in sync with Codemas-SYSTEM_DESIGN.md §5.
      ═══════════════════════════════════════════════════════════════════════════ -->
 
-<div class="header">
-  <h1>Live Submission Pipeline</h1>
-  <p>21 steps · 6 phases · runs for every code submission during the exam</p>
-  <div class="sample-box">
-    <span class="kw">def</span> <span class="fn">add</span>(a, b): <span class="kw">return</span> a + b
-    &nbsp;&nbsp;→&nbsp;&nbsp;question_id=<span class="str">7</span>, language=<span class="str">"python"</span>, student_id=<span class="str">1</span>
+<div class="gp">
+  <header class="gp-header">
+    <h1>How a submission moves through CodeMas</h1>
+    <p>Six actors hand one submission along in nine steps, from the student pressing Submit to the result on their screen. Postgres stays the single source of truth; the queue only ever carries a job ID. Locally, a thread pool inside the relay stands in for SQS and Lambda and runs the same handler code.</p>
+    <span class="gp-status-note"><b>Live since 2026-10-05:</b> SQS and Lambda in production; local transport in dev. Python and JavaScript only; C++ and Java still run on Celery.</span>
+  </header>
+
+  <div class="gp-banner" aria-live="polite">
+    <span class="gp-phase" id="gp-phase">Accept</span>
+    <span class="gp-title" id="gp-banner-title">Student submits code</span>
+    <span class="gp-count" id="gp-count">Step 1 of 9</span>
   </div>
-</div>
 
-<div class="phase-banner idle" id="sub-phase-header">
-  <div class="phase-pill" id="sub-phase-pill">—</div>
-  <div class="phase-name" id="sub-phase-name">Press Play or → to begin</div>
-  <div class="phase-sep"  id="sub-phase-sep"></div>
-  <div class="phase-tagline" id="sub-phase-tagline">Browser submits code → Django validates → queues execution → 201 response → SSE stream → Celery runs Docker sandbox → result pushed to browser.</div>
-</div>
-
-<div class="stage" id="sub-stage">
-  <svg class="connections" id="sub-svg-conn"></svg>
-  <div class="node n-browser"  id="sub-n-browser">  <div class="icon">🌐</div><div class="name">Browser</div> <div class="role">Student UI</div></div>
-  <div class="node n-django"   id="sub-n-django">   <div class="icon">⚙️</div><div class="name">Django</div>  <div class="role">API Server</div></div>
-  <div class="node n-redis"    id="sub-n-redis">    <div class="icon">⚡</div><div class="name">Redis</div>   <div class="role">Queue + Cache</div></div>
-  <div class="node n-celery"   id="sub-n-celery">   <div class="icon">🔧</div><div class="name">Celery</div>  <div class="role">Worker</div></div>
-  <div class="node n-docker"   id="sub-n-docker">   <div class="icon">🐳</div><div class="name">Docker</div>  <div class="role">Code Runner</div></div>
-  <div class="node n-postgres" id="sub-n-postgres"> <div class="icon">🗃️</div><div class="name">Postgres</div><div class="role">Permanent Store</div></div>
-  <div class="packet"    id="sub-packet"></div>
-  <div class="pkt-label" id="sub-pkt-label"></div>
-  <div class="celebration" id="sub-celebration"></div>
-</div>
-
-<div class="progress-wrap"><div class="progress-fill" id="sub-prog"></div></div>
-
-<div class="info-panel" id="sub-info-panel">
-  <div class="info-left">
-    <div class="step-counter">Step <span id="sub-s-num">—</span> of <span id="sub-s-total">—</span></div>
-    <div class="step-title"  id="sub-s-title">Press Play or → to begin</div>
-    <div class="step-desc"   id="sub-s-desc">Browser submits code → Django validates attempt limits → writes to Postgres → pushes execution job to Redis → returns 201 immediately → SSE stream delivers live status → Celery runs Docker sandbox → result saved and pushed to browser.</div>
+  <div class="gp-controls">
+    <div class="gp-dot-groups" id="gp-dot-groups" role="tablist" aria-label="Steps"></div>
+    <div class="gp-buttons">
+      <button class="gp-btn" id="gp-prev" type="button">Previous</button>
+      <button class="gp-btn" id="gp-play" type="button">Play</button>
+      <button class="gp-btn primary" id="gp-next" type="button">Next</button>
+    </div>
   </div>
-  <div class="info-right">
-    <div class="payload-label">Data / Command</div>
-    <div class="payload-box" id="sub-s-payload" style="color:#82aaff;border-left-color:#6366f1">—</div>
-  </div>
-</div>
 
-<div class="controls">
-  <button class="btn" id="sub-btn-restart">↺ Restart</button>
-  <button class="btn" id="sub-btn-prev">← Prev</button>
-  <button class="btn play-btn" id="sub-btn-play">▶ Play</button>
-  <button class="btn" id="sub-btn-next">Next →</button>
-  <div class="speed-wrap">Speed: <input type="range" id="sub-speed" min="500" max="2800" value="1500"></div>
-</div>
+  <figure class="gp-figure">
+    <div class="gp-scroll">
+      <svg class="gp-seq" id="gp-seq" viewBox="0 0 980 660" role="img"
+           aria-label="Sequence diagram: the browser posts code to Django, Django saves the submission and an outbox job in Postgres, the relay sends the job ID to SQS, SQS triggers Lambda, Lambda claims the code and tests from Django, runs them, and completes with results, and the browser polls Django for the result.">
+        <defs>
+          <marker id="gp-m-browser" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6366f1"/></marker>
+          <marker id="gp-m-django" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#10b981"/></marker>
+          <marker id="gp-m-relay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/></marker>
+          <marker id="gp-m-sqs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#f59e0b"/></marker>
+          <marker id="gp-m-lambda" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#e63946"/></marker>
+        </defs>
 
-<div class="step-list" id="sub-step-dots"></div>
+        <!-- Lifelines -->
+        <g font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" text-anchor="middle">
+          <line x1="80"  y1="66" x2="80"  y2="648" stroke="#2a3045" stroke-dasharray="4 5"/>
+          <line x1="250" y1="66" x2="250" y2="648" stroke="#2a3045" stroke-dasharray="4 5"/>
+          <line x1="430" y1="66" x2="430" y2="648" stroke="#2a3045" stroke-dasharray="4 5"/>
+          <line x1="610" y1="66" x2="610" y2="648" stroke="#2a3045" stroke-dasharray="4 5"/>
+          <line x1="760" y1="66" x2="760" y2="648" stroke="#2a3045" stroke-dasharray="4 5"/>
+          <line x1="900" y1="66" x2="900" y2="648" stroke="#2a3045" stroke-dasharray="4 5"/>
+
+          <rect x="20"  y="16" width="120" height="48" rx="10" fill="#1a1f2e" stroke="#6366f1"/>
+          <text x="80"  y="37" fill="#a5b4fc">Browser</text>
+          <text x="80"  y="54" fill="#64748b" font-size="11" font-weight="400">student</text>
+
+          <rect x="190" y="16" width="120" height="48" rx="10" fill="#1a1f2e" stroke="#10b981"/>
+          <text x="250" y="37" fill="#34d399">Django</text>
+          <text x="250" y="54" fill="#64748b" font-size="11" font-weight="400">API + internal API</text>
+
+          <rect x="370" y="16" width="120" height="48" rx="10" fill="#1a1f2e" stroke="#8b5cf6"/>
+          <text x="430" y="37" fill="#c4b5fd">Postgres</text>
+          <text x="430" y="54" fill="#64748b" font-size="11" font-weight="400">submission + job</text>
+
+          <rect x="550" y="16" width="120" height="48" rx="10" fill="#1a1f2e" stroke="#38bdf8"/>
+          <text x="610" y="37" fill="#7dd3fc">Relay</text>
+          <text x="610" y="54" fill="#64748b" font-size="11" font-weight="400">run_relay</text>
+
+          <rect x="700" y="16" width="120" height="48" rx="10" fill="#1a1f2e" stroke="#f59e0b"/>
+          <text x="760" y="37" fill="#fbbf24">SQS</text>
+          <text x="760" y="54" fill="#64748b" font-size="11" font-weight="400">codemas-exec</text>
+
+          <rect x="840" y="16" width="120" height="48" rx="10" fill="#1a1f2e" stroke="#e63946"/>
+          <text x="900" y="37" fill="#f87171">Lambda</text>
+          <text x="900" y="54" fill="#64748b" font-size="11" font-weight="400">codemas-exec</text>
+        </g>
+
+        <!-- Messages: each group belongs to one step (data-step) -->
+        <g font-family="JetBrains Mono, ui-monospace, monospace" font-size="11.5" text-anchor="middle" paint-order="stroke" stroke-linejoin="round">
+
+          <g class="gp-msg" data-step="1">
+            <line class="gp-shaft" x1="80" y1="104" x2="246" y2="104" stroke="#6366f1" stroke-width="1.6" marker-end="url(#gp-m-browser)"/>
+            <text x="165" y="96" fill="#a5b4fc" stroke="#151a27" stroke-width="4">POST code</text>
+          </g>
+
+          <g class="gp-msg" data-step="2">
+            <line class="gp-shaft" x1="250" y1="140" x2="426" y2="140" stroke="#10b981" stroke-width="1.6" marker-end="url(#gp-m-django)"/>
+            <text x="340" y="132" fill="#34d399" stroke="#151a27" stroke-width="4">one transaction</text>
+            <text x="340" y="156" fill="#94a3b8" stroke="#151a27" stroke-width="4" font-size="10.5">submission + job: pending</text>
+          </g>
+          <g class="gp-msg" data-step="2">
+            <line class="gp-shaft ret" x1="250" y1="180" x2="84" y2="180" stroke="#10b981" stroke-width="1.6" stroke-dasharray="3 4" marker-end="url(#gp-m-django)"/>
+            <text x="165" y="172" fill="#34d399" stroke="#151a27" stroke-width="4">201 submission_id</text>
+          </g>
+
+          <g class="gp-msg" data-step="3">
+            <line class="gp-shaft" x1="610" y1="218" x2="434" y2="218" stroke="#38bdf8" stroke-width="1.6" marker-end="url(#gp-m-relay)"/>
+            <text x="520" y="210" fill="#7dd3fc" stroke="#151a27" stroke-width="4">pending jobs</text>
+            <text x="520" y="234" fill="#94a3b8" stroke="#151a27" stroke-width="4" font-size="10.5">SKIP LOCKED</text>
+          </g>
+
+          <g class="gp-msg" data-step="4">
+            <line class="gp-shaft" x1="610" y1="262" x2="756" y2="262" stroke="#38bdf8" stroke-width="1.6" marker-end="url(#gp-m-relay)"/>
+            <text x="685" y="254" fill="#7dd3fc" stroke="#151a27" stroke-width="4">{job_id}</text>
+          </g>
+          <g class="gp-msg" data-step="4">
+            <line class="gp-shaft" x1="610" y1="294" x2="434" y2="294" stroke="#38bdf8" stroke-width="1.6" marker-end="url(#gp-m-relay)"/>
+            <text x="520" y="286" fill="#7dd3fc" stroke="#151a27" stroke-width="4">job: queued</text>
+          </g>
+
+          <g class="gp-msg" data-step="5">
+            <line class="gp-shaft" x1="760" y1="334" x2="896" y2="334" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#gp-m-sqs)"/>
+            <text x="830" y="326" fill="#fbbf24" stroke="#151a27" stroke-width="4">trigger</text>
+          </g>
+
+          <g class="gp-msg" data-step="6">
+            <line class="gp-shaft" x1="900" y1="376" x2="254" y2="376" stroke="#e63946" stroke-width="1.6" marker-end="url(#gp-m-lambda)"/>
+            <text x="575" y="368" fill="#f87171" stroke="#151a27" stroke-width="4">claim(job_id, token)</text>
+          </g>
+          <g class="gp-msg" data-step="6">
+            <line class="gp-shaft" x1="250" y1="412" x2="426" y2="412" stroke="#10b981" stroke-width="1.6" marker-end="url(#gp-m-django)"/>
+            <text x="340" y="404" fill="#34d399" stroke="#151a27" stroke-width="4">lease + token</text>
+            <text x="340" y="428" fill="#94a3b8" stroke="#151a27" stroke-width="4" font-size="10.5">job: running, read code</text>
+          </g>
+          <g class="gp-msg" data-step="6">
+            <line class="gp-shaft ret" x1="250" y1="452" x2="896" y2="452" stroke="#10b981" stroke-width="1.6" stroke-dasharray="3 4" marker-end="url(#gp-m-django)"/>
+            <text x="575" y="444" fill="#34d399" stroke="#151a27" stroke-width="4">code + tests + token</text>
+          </g>
+
+          <g class="gp-msg" data-step="7">
+            <rect x="884" y="470" width="32" height="44" rx="4" fill="#2a1518" stroke="#e63946"/>
+            <text x="836" y="488" fill="#f87171" stroke="#151a27" stroke-width="4" text-anchor="end">run tests</text>
+            <text x="836" y="504" fill="#94a3b8" stroke="#151a27" stroke-width="4" font-size="10.5" text-anchor="end">in sandbox</text>
+          </g>
+
+          <g class="gp-msg" data-step="8">
+            <line class="gp-shaft" x1="900" y1="538" x2="254" y2="538" stroke="#e63946" stroke-width="1.6" marker-end="url(#gp-m-lambda)"/>
+            <text x="575" y="530" fill="#f87171" stroke="#151a27" stroke-width="4">complete(token, outputs)</text>
+          </g>
+          <g class="gp-msg" data-step="8">
+            <line class="gp-shaft" x1="250" y1="572" x2="426" y2="572" stroke="#10b981" stroke-width="1.6" marker-end="url(#gp-m-django)"/>
+            <text x="340" y="564" fill="#34d399" stroke="#151a27" stroke-width="4">grade if token owns job</text>
+            <text x="340" y="588" fill="#94a3b8" stroke="#151a27" stroke-width="4" font-size="10.5">job: succeeded</text>
+          </g>
+
+          <g class="gp-msg" data-step="9">
+            <line class="gp-shaft" x1="80" y1="612" x2="246" y2="612" stroke="#6366f1" stroke-width="1.6" marker-end="url(#gp-m-browser)"/>
+            <text x="165" y="604" fill="#a5b4fc" stroke="#151a27" stroke-width="4">GET /status/, 1 s → 3 s</text>
+          </g>
+          <g class="gp-msg" data-step="9">
+            <line class="gp-shaft ret" x1="250" y1="640" x2="84" y2="640" stroke="#10b981" stroke-width="1.6" stroke-dasharray="3 4" marker-end="url(#gp-m-django)"/>
+            <text x="165" y="632" fill="#34d399" stroke="#151a27" stroke-width="4">passed / failed</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Solid arrows are requests or writes; dashed arrows are replies. The highlighted arrows belong to the current step. Lambda never touches Postgres: it reads the code and writes the results through Django.</figcaption>
+  </figure>
+
+  <section class="gp-detail">
+    <div class="gp-card">
+      <h2 id="gp-d-title">Student submits code</h2>
+      <div class="gp-route" id="gp-d-route"></div>
+      <p class="gp-k">Handed over</p>
+      <pre id="gp-d-payload"></pre>
+    </div>
+    <div class="gp-card">
+      <p class="gp-k">Why it works this way</p>
+      <p class="gp-p" id="gp-d-why"></p>
+      <p class="gp-k">If something goes wrong</p>
+      <p class="gp-fail" id="gp-d-fail"></p>
+      <p class="gp-k">Job row in Postgres</p>
+      <div class="gp-states" id="gp-d-states"></div>
+      <p class="gp-side-note">A job gets three claims. If it still has no result, it becomes <code>dead</code> and its submission <code>error</code>, which doesn't count against the student's attempts. <code>codemas-exec-dlq</code> holds messages whose delivery wasn't acknowledged 3 times. Causes: crashes and timeouts; Django unreachable; a claim refused with 401, 404 or busy; a failed <code>/fail/</code> call; a <code>complete</code> answered with anything but 200 or 409; and claims skipped for lack of time. A job released through <code>/fail/</code> has its message acknowledged, so it dies in Postgres with no message in the DLQ.</p>
+    </div>
+  </section>
+</div>
 
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
@@ -335,7 +583,7 @@
 
 <div class="stage" id="plag-stage">
   <svg class="connections" id="plag-svg-conn"></svg>
-  <div class="node n-trainer"  id="plag-n-trainer">  <div class="icon">👤</div><div class="name">Trainer</div> <div class="role">ExamOpsView</div></div>
+  <div class="node n-trainer"  id="plag-n-trainer">  <div class="icon">👤</div><div class="name">Trainer</div> <div class="role">Exam report</div></div>
   <div class="node n-django"   id="plag-n-django">   <div class="icon">⚙️</div><div class="name">Django</div>  <div class="role">API Server</div></div>
   <div class="node n-redis"    id="plag-n-redis">    <div class="icon">⚡</div><div class="name">Redis</div>   <div class="role">Queue + Cache</div></div>
   <div class="node n-celery"   id="plag-n-celery">   <div class="icon">🔧</div><div class="name">Celery</div>  <div class="role">Worker</div></div>
@@ -694,177 +942,6 @@ function makeAnimator(prefix, PHASES, STEPS, TOP_NODES, BOTTOM_NODES, resetDesc)
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SUBMISSION DATA — 21 steps, 6 phases
-// ══════════════════════════════════════════════════════════════════════════════
-const SUB_PHASES = [
-  { name: 'Submit & Validate',  color: '#10b981', tagline: 'Browser POSTs code — Django checks attempt limits before doing anything else.' },
-  { name: 'Persist Submission', color: '#10b981', tagline: 'Submission row written to Postgres with status=pending. Permanent record from here on.' },
-  { name: 'Queue & Acknowledge',color: '#10b981', tagline: 'Execution job pushed to Redis. Django immediately returns 201 — no waiting for code to run.' },
-  { name: 'Open Result Stream', color: '#6366f1', tagline: 'Browser opens an SSE connection so the server can push results without polling.' },
-  { name: 'Code Execution',     color: '#e63946', tagline: 'Celery picks up the job, runs code in an isolated Docker sandbox, publishes live status to Redis.' },
-  { name: 'Finalize & Notify',  color: '#10b981', tagline: 'Results saved to Postgres. Terminal status flows Celery → Redis → Django SSE → Browser.' },
-];
-
-const SUB_STEPS = [
-  // ── Phase 0: Submit & Validate ──
-  {
-    phase:0, from:'browser', to:'django', actor:'browser',
-    tag: 'POST /api/submissions/',
-    title: '① Browser → Django: Submit code',
-    desc: 'Student hits Submit. Browser sends a POST with the code, question ID, language, and 4 behavioural signals captured by DOM listeners (paste events, tab switches, time elapsed). JWT auth header included.',
-    payload: 'POST /api/submissions/\nAuthorization: Bearer eyJ...\n\n{\n  "question": 7,\n  "code": "def add(a, b):\\n    return a + b",\n  "language": "python",\n  "had_paste_event": true,\n  "paste_char_count": 187,\n  "time_to_complete_seconds": 34,\n  "tab_switch_count": 6\n}',
-  },
-  {
-    phase:0, from:'django', to:'postgres', actor:'django',
-    tag: 'SELECT COUNT(*) attempts',
-    title: '② Django → Postgres: Count existing attempts',
-    desc: 'Django counts how many submissions this student already has for Q7. max_attempts is read from the PlagiarismPolicy singleton (configurable by trainer).',
-    payload: 'SELECT COUNT(*) FROM submissions\nWHERE student_id = 1\n  AND question_id = 7\n\n-- max_attempts from PlagiarismPolicy = 3',
-  },
-  {
-    phase:0, from:'postgres', to:'django', actor:'postgres',
-    tag: 'count=1 → attempt_number=2 ✓',
-    title: '③ Postgres → Django: Attempt allowed',
-    desc: 'Student has 1 previous attempt. attempt_number = 1 + 1 = 2. Max is 3. Allowed to proceed.',
-    payload: '→ count = 1\nattempt_number = count + 1 = 2\nmax_attempts    = 3\n\n2 ≤ 3  ✓  request continues',
-  },
-  // ── Phase 1: Persist Submission ──
-  {
-    phase:1, from:'django', to:'postgres', actor:'django',
-    tag: 'INSERT submission (status=pending)',
-    title: '④ Django → Postgres: Write submission row',
-    desc: 'Serializer validated. Django writes the submission to Postgres with status=pending. All 4 behavioural signal fields are stored in the same row as the code — they will be read by Phase 1 plagiarism scoring after the exam closes.',
-    payload: 'INSERT INTO submissions (\n  student_id=1, question_id=7, exam_id=2,\n  code="def add(a,b): return a+b",\n  language="python",\n  status="pending",\n  attempt_number=2,\n  paste_char_count=187,\n  time_to_complete_seconds=34,\n  tab_switch_count=6,\n  had_paste_event=true\n)',
-  },
-  {
-    phase:1, from:'postgres', to:'django', actor:'postgres',
-    tag: 'id=42 created',
-    title: '⑤ Postgres → Django: Row created, id=42',
-    desc: 'Postgres confirms the INSERT and returns the auto-generated primary key. Django now has submission.id = 42.',
-    payload: '→ submission.id = 42\n   status         = "pending"\n   attempt_number = 2',
-  },
-  // ── Phase 2: Queue & Acknowledge ──
-  {
-    phase:2, from:'django', to:'redis', actor:'django',
-    tag: 'LPUSH execute_submission(42)',
-    title: '⑥ Django → Redis: Push execution job',
-    desc: '.delay() serializes the task name + args to JSON and does LPUSH on the "celery" list. This does NOT run the function — it just queues it.',
-    payload: 'LPUSH celery \'{\n  "task": "execution.tasks.execute_submission",\n  "args": [42],\n  "id": "a1b2c3..."\n}\'',
-  },
-  {
-    phase:2, from:'django', to:'browser', actor:'django',
-    tag: '201 {id:42, status:"pending"}',
-    title: '⑦ Django → Browser: 201 Created',
-    desc: 'Django immediately returns 201 without waiting for execution. The browser now has the submission id and can open the SSE stream.',
-    payload: 'HTTP 201 Created\n\n{\n  "id": 42,\n  "status": "pending",\n  "language": "python",\n  "attempt_number": 2,\n  "submitted_at": "2026-05-19T10:23:01Z"\n}',
-  },
-  // ── Phase 3: Open Result Stream ──
-  {
-    phase:3, from:'browser', to:'django', actor:'browser',
-    tag: 'GET /submissions/42/stream (SSE)',
-    title: '⑧ Browser → Django: Open SSE stream',
-    desc: 'Browser immediately opens a Server-Sent Events connection. EventSource uses a token query param because SSE cannot set custom headers.',
-    payload: 'GET /api/submissions/42/stream?token=eyJ...\nAccept: text/event-stream\nCache-Control: no-cache\n\n← long-lived HTTP connection, not polling',
-  },
-  {
-    phase:3, from:'django', to:'redis', actor:'django',
-    tag: 'SUBSCRIBE submission:42',
-    title: '⑨ Django → Redis: Subscribe to result channel',
-    desc: 'The SSE endpoint subscribes to the Redis pub/sub channel "submission:42". It now blocks in pubsub.listen() — sleeping until Celery publishes.',
-    payload: 'SUBSCRIBE submission:42\n\n→ Django SSE goroutine is now\n  sleeping on pubsub.listen()\n  waiting for any PUBLISH on this channel',
-  },
-  {
-    phase:3, from:'django', to:'browser', actor:'django',
-    tag: 'data: {"status":"waiting"}',
-    title: '⑩ Django → Browser: First SSE event',
-    desc: 'SSE immediately sends "waiting" so the browser knows the connection is live. Browser shows "Waiting in queue..." spinner.',
-    payload: 'data: {"status": "waiting"}\n\n\n← browser EventSource.onmessage fires\n← UI shows: "Waiting in queue..."',
-  },
-  // ── Phase 4: Code Execution ──
-  {
-    phase:4, from:'redis', to:'celery', actor:'redis',
-    tag: 'BRPOP → execute_submission(42)',
-    title: '⑪ Redis → Celery: Worker wakes up',
-    desc: 'Celery worker was sleeping on BRPOP with timeout=0. The LPUSH from step 6 unblocked it. It deserializes the JSON and calls execute_submission(42). normalized_code is stored on the submission after execution for later plagiarism comparison.',
-    payload: 'BRPOP celery 0\n← was blocking at OS level (no CPU)\n→ got: {"task":"execute_submission","args":[42]}\n\ncalling: execute_submission(42)',
-  },
-  {
-    phase:4, from:'celery', to:'postgres', actor:'celery',
-    tag: 'UPDATE status=running',
-    title: '⑫ Celery → Postgres: Mark as running',
-    desc: 'Worker fetches the submission row and sets status to "running" so trainers and the student dashboard can show live progress.',
-    payload: 'UPDATE submissions\nSET status = "running"\nWHERE id = 42',
-  },
-  {
-    phase:4, from:'celery', to:'redis', actor:'celery',
-    tag: 'PUBLISH {"status":"running"}',
-    title: '⑬ Celery → Redis: Publish running status',
-    desc: 'Celery publishes to the submission:42 channel. Django SSE is subscribed — it will receive this instantly and forward it to the browser.',
-    payload: 'PUBLISH submission:42 \'{"status": "running"}\'\n\n→ Redis wakes all subscribers\n   on this channel immediately',
-  },
-  {
-    phase:4, from:'redis', to:'django', actor:'redis',
-    tag: 'message received — not terminal',
-    title: '⑭ Redis → Django: SSE unblocks on running',
-    desc: 'pubsub.listen() unblocks. Status is "running" — not in {passed, failed, error} — so the SSE loop forwards it and stays open.',
-    payload: '→ message type: "message"\n   payload: {"status": "running"}\n\n"running" not in terminal set\n→ forward and keep stream open',
-  },
-  {
-    phase:4, from:'django', to:'browser', actor:'django',
-    tag: 'data: {"status":"running"}',
-    title: '⑮ Django → Browser: SSE event — running',
-    desc: 'Django forwards the running status down the SSE stream. Browser updates UI to show "Running your code..." with an animated indicator.',
-    payload: 'data: {"status": "running"}\n\n\n← browser EventSource.onmessage fires\n← UI shows: "Running your code..."',
-  },
-  {
-    phase:4, from:'celery', to:'docker', actor:'celery',
-    tag: 'docker run python:3.11 + test input',
-    title: '⑯ Celery → Docker: Spin up sandbox container',
-    desc: 'For each test case, a Docker container is started with the student code + test input. No network, 128MB memory limit, auto-destroyed after.',
-    payload: 'docker run python:3.11-alpine \\\n  --network=disabled \\\n  --memory=128m \\\n  --rm \\\n  python3 -c "...add(1,2)..."\n\ninput: "1 2"  expected: "3"',
-  },
-  {
-    phase:4, from:'docker', to:'celery', actor:'docker',
-    tag: 'output="3", 187ms, all passed',
-    title: '⑰ Docker → Celery: Test results back',
-    desc: 'Container ran and printed "3". Celery compares against expected output. All 3 test cases pass. Container is destroyed automatically.',
-    payload: 'stdout: "3\\n"\nstderr: ""\nexec_time: 187ms\n\npassed: "3".strip() == "3" ✓\nall_passed = True  (3/3)',
-  },
-  // ── Phase 5: Finalize & Notify ──
-  {
-    phase:5, from:'celery', to:'postgres', actor:'celery',
-    tag: 'INSERT results + UPDATE status=passed',
-    title: '⑱ Celery → Postgres: Save results, mark passed',
-    desc: 'Celery writes one Result row per test case, then updates the submission status to "passed". normalized_code is also stored here — pre-computed for plagiarism cross-comparison at exam close.',
-    payload: 'INSERT INTO results (submission_id=42, test_case_id=21,\n  passed=true, actual_output="3", exec_time=187)\n-- (3 rows inserted)\n\nUPDATE submissions\nSET status="passed",\n    normalized_code="def VAR_0(VAR_1,VAR_2): return VAR_1+VAR_2"\nWHERE id=42',
-  },
-  {
-    phase:5, from:'celery', to:'redis', actor:'celery',
-    tag: 'PUBLISH {"status":"passed"}',
-    title: '⑲ Celery → Redis: Publish final result',
-    desc: 'Celery publishes the terminal status to submission:42. Django SSE is still subscribed and will receive this immediately.',
-    payload: 'PUBLISH submission:42 \'{"status": "passed"}\'\n\n→ Redis wakes Django SSE subscriber\n   this is the terminal publish',
-  },
-  {
-    phase:5, from:'redis', to:'django', actor:'redis',
-    tag: 'message → terminal status',
-    title: '⑳ Redis → Django: Terminal status received',
-    desc: '"passed" is in the terminal set {passed, failed, error}. The SSE loop will forward this message and then break — closing the stream.',
-    payload: '→ message type: "message"\n   payload: {"status": "passed"}\n\n"passed" in {passed, failed, error}\n→ forward then break',
-  },
-  {
-    phase:5, from:'django', to:'browser', actor:'django',
-    tag: 'data: {"status":"passed"} → stream closes',
-    title: '㉑ Django → Browser: Final SSE event ✓',
-    desc: 'Django forwards "passed" and the loop breaks. pubsub.unsubscribe() is called. The SSE stream closes. Browser fetches per-test-case results and shows the pass screen.',
-    payload: 'data: {"status": "passed"}\n\n\n← EventSource.close() called\n← pubsub.unsubscribe("submission:42")\n← UI shows: ✓ Passed — 3/3 test cases',
-    final: true,
-    celebration: '✓ Passed — 3 / 3 test cases',
-  },
-];
-
-
-// ══════════════════════════════════════════════════════════════════════════════
 // PLAGIARISM DATA — 14 steps, 3 phases
 // ══════════════════════════════════════════════════════════════════════════════
 const PLAG_PHASES = [
@@ -876,12 +953,12 @@ const PLAG_PHASES = [
   {
     name:    'Behavioural Analysis',
     color:   '#6366f1',
-    tagline: 'Celery picks up the orchestrator task. get_policy() reads PlagiarismPolicy from Postgres (first call) then caches in Redis (60s TTL). Phase 1 runs synchronously — each submission scored on paste ratio, speed, tab switches, attempt discontinuity. LOW confidence = 3+ signals = most suspicious.',
+    tagline: 'Celery picks up the orchestrator task. get_policy() reads PlagiarismPolicy from Postgres (first call) then caches in Redis (60s TTL). Phase 1 runs synchronously — each submission scored on paste ratio, speed, tab switches, attempt discontinuity. HIGH confidence = 3+ signals = most suspicious.',
   },
   {
     name:    'Similarity Detection',
     color:   '#e63946',
-    tagline: 'After Phase 1 loop completes, one run_question_plagiarism_check task queued per question with 30s stagger. get_policy() → Redis HIT this time. Load LOW-confidence suspects → full cohort → AST normalize → TF-IDF → cosine → flag pairs above threshold.',
+    tagline: 'After Phase 1 loop completes, one run_question_plagiarism_check task queued per question with 30s stagger. get_policy() → Redis HIT this time. Load HIGH-confidence suspects → full cohort → AST normalize → TF-IDF → cosine → flag pairs above threshold.',
   },
 ];
 
@@ -942,14 +1019,14 @@ const PLAG_STEPS = [
     tag: 'Phase 1 loop — 4 signals scored per submission',
     title: '⑧ Celery: Phase 1 — score each submission synchronously',
     desc: 'For each submission: paste_signal() (paste_char_count / code length), time_signal() (elapsed vs policy baseline for difficulty), tab_switch_signal() (visibilitychange count), submission_surprise_signal() (code similarity to previous attempt). Policy weights already cached in Redis.',
-    payload: '# run_behavioural_check(sub.id) — direct call per submission\npaste_score = 187 / 210        # ratio 0.89  → 1.0\ntime_score  = 34 / 240         # ratio 0.14  → 1.0  (medium baseline)\ntab_score   = 6 tab switches   # count ≥ 5  → 1.0\nsub_score   = first attempt    # no previous → 0.0\n\nrisk = 0.40×1.0 + 0.30×1.0 + 0.15×1.0 + 0.15×0.0 = 0.85\nsignals_fired = 3\nconfidence = "low"  # 3+ signals → LOW integrity confidence\n                    # LOW = most suspicious (least confident they wrote it)',
+    payload: '# run_behavioural_check(sub.id) — direct call per submission\npaste_score = 187 / 210        # ratio 0.89  → 1.0\ntime_score  = 34 / 240         # ratio 0.14  → 1.0  (medium baseline)\ntab_score   = 6 tab switches   # count ≥ 5  → 1.0\nsub_score   = first attempt    # no previous → 0.0\n\nrisk = 0.40×1.0 + 0.30×1.0 + 0.15×1.0 + 0.15×0.0 = 0.85\nsignals_fired = 3\nconfidence = "high"  # 3+ signals → HIGH flag confidence\n                     # HIGH = most suspicious (strongest evidence of misconduct)',
   },
   {
     phase:1, from:'celery', to:'postgres', actor:'celery',
     tag: 'BehaviouralFlag.update_or_create()',
     title: '⑨ Celery → Postgres: Write BehaviouralFlag if risk > threshold',
     desc: 'risk_score 0.85 > policy.min_risk_score 0.20 → row written. update_or_create makes re-runs idempotent. Marks behavioural_check_done=True on the Submission. Phase 1 loop continues for all remaining submissions before Phase 2 is queued.',
-    payload: 'BehaviouralFlag.update_or_create(\n  submission=sub,\n  defaults={\n    "risk_score":  0.85,\n    "confidence":  "low",   # 3+ signals → LOW (most suspicious)\n    "paste_score": 1.0,\n    "time_score":  1.0,\n    "snapshot_score": 1.0,  # tab (field reused)\n    "submission_score": 0.0,\n    "signals_triggered": [\n      "Pasted 89% of code (187 chars)",\n      "Solved medium in 34s (baseline 4m)",\n      "Left exam tab 6 times",\n    ]\n  }\n)\n# risk 0.85 > min_risk_score 0.20 → written',
+    payload: 'BehaviouralFlag.update_or_create(\n  submission=sub,\n  defaults={\n    "risk_score":  0.85,\n    "confidence":  "high",  # 3+ signals → HIGH (most suspicious)\n    "paste_score": 1.0,\n    "time_score":  1.0,\n    "snapshot_score": 1.0,  # tab (field reused)\n    "submission_score": 0.0,\n    "signals_triggered": [\n      "Pasted 89% of code (187 chars)",\n      "Solved medium in 34s (baseline 4m)",\n      "Left exam tab 6 times",\n    ]\n  }\n)\n# risk 0.85 > min_risk_score 0.20 → written',
   },
   // ── Phase 2: Similarity Detection ──
   {
@@ -963,8 +1040,8 @@ const PLAG_STEPS = [
     phase:2, from:'redis', to:'celery', actor:'redis',
     tag: 'BRPOP → run_question_plagiarism_check(Q1)',
     title: '⑪ Redis → Celery: Per-question task starts',
-    desc: 'Celery picks up Q1 task. get_policy() called — Redis HIT this time (within 60s TTL, no DB). Immediately queries BehaviouralFlags for LOW-confidence suspects. If none found, task exits immediately saving all TF-IDF compute.',
-    payload: 'BRPOP celery 0\n→ {"task":"run_question_plagiarism_check","args":[Q1_id]}\n\npolicy = get_policy()  # → Redis HIT (no DB trip)\n\nhigh_risk_ids = BehaviouralFlag\n    .filter(question=Q1, confidence="low")\n    .values_list("submission__student_id")\n# K = 10 suspects out of 200 students\n\nif not high_risk_ids:\n    return  # skip — no suspects, save all TF-IDF',
+    desc: 'Celery picks up Q1 task. get_policy() called — Redis HIT this time (within 60s TTL, no DB). Immediately queries BehaviouralFlags for HIGH-confidence suspects. If none found, task exits immediately saving all TF-IDF compute.',
+    payload: 'BRPOP celery 0\n→ {"task":"run_question_plagiarism_check","args":[Q1_id]}\n\npolicy = get_policy()  # → Redis HIT (no DB trip)\n\nhigh_risk_ids = BehaviouralFlag\n    .filter(question=Q1, confidence="high")\n    .values_list("submission__student_id")\n# K = 10 suspects out of 200 students\n\nif not high_risk_ids:\n    return  # skip — no suspects, save all TF-IDF',
   },
   {
     phase:2, from:'celery', to:'postgres', actor:'celery',
@@ -977,8 +1054,8 @@ const PLAG_STEPS = [
     phase:2, from:'celery', to:'celery', actor:'celery',
     tag: 'normalize → TF-IDF fit_transform → cosine_similarity',
     title: '⑬ Celery: AST normalize → TF-IDF → 200×200 similarity matrix',
-    desc: 'Pure compute — no network calls. Strip variable names, comments, docstrings → TfidfVectorizer.fit_transform() → cosine_similarity(). Upper triangle loop checks only pairs where at least one side is a LOW-confidence suspect: O(K×N) = 2,000 checks vs O(N²) = 19,900.',
-    payload: '# 3 compute stages:\nnormalized = [normalize_code(s.code) for s in all_subs]\n# strip comments, strip docstrings via AST\n# rename all user vars → VAR_0, VAR_1...\n\nmatrix = TfidfVectorizer().fit_transform(normalized)\n# shape: (200, V)  weights up rare tokens\n\nsim = cosine_similarity(matrix)\n# shape: (200, 200)  all pairs in one numpy call\n\n# Upper triangle O(K×N) filter:\n# if neither side is LOW-confidence suspect → skip\n# K=10, N=200 → 2,000 checks vs 19,900 naive',
+    desc: 'Pure compute — no network calls. Strip variable names, comments, docstrings → TfidfVectorizer.fit_transform() → cosine_similarity(). Upper triangle loop checks only pairs where at least one side is a HIGH-confidence suspect: O(K×N) = 2,000 checks vs O(N²) = 19,900.',
+    payload: '# 3 compute stages:\nnormalized = [normalize_code(s.code) for s in all_subs]\n# strip comments, strip docstrings via AST\n# rename all user vars → VAR_0, VAR_1...\n\nmatrix = TfidfVectorizer().fit_transform(normalized)\n# shape: (200, V)  weights up rare tokens\n\nsim = cosine_similarity(matrix)\n# shape: (200, 200)  all pairs in one numpy call\n\n# Upper triangle O(K×N) filter:\n# if neither side is HIGH-confidence suspect → skip\n# K=10, N=200 → 2,000 checks vs 19,900 naive',
   },
   {
     phase:2, from:'celery', to:'postgres', actor:'celery',
@@ -993,22 +1070,189 @@ const PLAG_STEPS = [
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// INIT BOTH PLAYERS
+// INIT THE PLAGIARISM PLAYER
 // ══════════════════════════════════════════════════════════════════════════════
-const subPlayer = makeAnimator(
-  'sub', SUB_PHASES, SUB_STEPS,
-  ['browser','django','redis','celery','docker'], ['postgres'],
-  'Browser submits code → Django validates attempt limits → writes to Postgres → pushes execution job to Redis → returns 201 immediately → SSE stream delivers live status → Celery runs Docker sandbox → result saved and pushed to browser.'
-);
-
 const plagPlayer = makeAnimator(
   'plag', PLAG_PHASES, PLAG_STEPS,
   ['trainer','django','redis','celery'], ['postgres'],
   'Trainer closes exam → pre_save signal fires → Celery batch task orchestrates Phase 1 (behavioural scoring, synchronous) then Phase 2 (TF-IDF similarity, async per question with 30s stagger).'
 );
 
-// default keyboard target is submission player
-lastActive = subPlayer;
+// ══════════════════════════════════════════════════════════════════════════════
+// GRADING PIPELINE STEP-THROUGH (section 1) — 9 steps, 4 phases
+// Text matches the built code: backend/jobs/, lambda/exec/, ExamTakeView.vue polling.
+// ══════════════════════════════════════════════════════════════════════════════
+const gpPlayer = (function () {
+  var ACTORS = {
+    browser:  { name: 'Browser',  ink: '#a5b4fc' },
+    django:   { name: 'Django',   ink: '#34d399' },
+    postgres: { name: 'Postgres', ink: '#c4b5fd' },
+    relay:    { name: 'Relay',    ink: '#7dd3fc' },
+    sqs:      { name: 'SQS',      ink: '#fbbf24' },
+    lambda:   { name: 'Lambda',   ink: '#f87171' }
+  };
+  var STATES = ['pending', 'queued', 'running', 'succeeded'];
+
+  var STEPS = [
+    { phase: 'Accept', title: 'Student submits code', route: ['browser', 'django'], state: null,
+      payload: 'POST /api/submissions/create/\n\n{\n  "question": 118,\n  "language": "python",\n  "code": "n = int(input())\\n..."\n}',
+      why: 'This is the only thing the student does. Everything after this happens without them waiting on a request.',
+      fail: 'Invalid input or no attempts left: Django answers with an error shown inline, and nothing is saved. <b>Two submits at once:</b> the second waits on the lock on the student’s row, then counts the first. It becomes the next attempt, or gets 403 at the limit. A unique (student, question, attempt_number) constraint is the backstop for any writer outside the lock (409).' },
+
+    { phase: 'Accept', title: 'One transaction writes two rows', route: ['django', 'postgres', 'browser'], state: 'pending',
+      payload: 'BEGIN;\n  -- lock this student\'s row: their submits queue up here\n  SELECT ... FROM accounts_user WHERE id = 42 FOR UPDATE;\n  -- attempts used = this question\'s submissions not in \'error\'\n  INSERT INTO submissions_submission (..., attempt_number, status)\n       VALUES (..., 2, \'pending\');\n  INSERT INTO jobs_job (id, kind, subject_id, status)\n       VALUES (\'7f3c…\', \'execute_submission\', 10807, \'pending\');\nCOMMIT;\n\n→ 201 { "id": 10807, "status": "pending", … }',
+      why: 'The submission and its job (the outbox row) exist together or not at all. The request never calls the queue, so a slow or broken queue can never lose a submission. Only Python and JavaScript get a job row; C++ and Java are handed to Celery after the commit.',
+      fail: '<b>Commit fails:</b> neither row exists. The student sees an error, can try again, and the attempt is not used.' },
+
+    { phase: 'Hand off', title: 'Relay picks up waiting jobs', route: ['relay', 'postgres'], state: 'pending',
+      payload: '-- every 0.5 s\nSELECT ... FROM jobs_job\n WHERE status = \'pending\'\n ORDER BY created_at\n LIMIT 50\n FOR UPDATE SKIP LOCKED;',
+      why: 'SKIP LOCKED lets several relays run side by side without picking up the same job.',
+      fail: '<b>Relay down:</b> jobs wait safely as pending and go out as soon as it is back. The student sees “Waiting in line”, then “Taking longer than usual…”.' },
+
+    { phase: 'Hand off', title: 'Relay sends the job ID to SQS', route: ['relay', 'sqs', 'postgres'], state: 'queued',
+      payload: 'sqs.send_message_batch(            # up to 10 per call\n  QueueUrl = codemas-exec,\n  Entries = [{\n    Id: \'7f3c…\',\n    MessageBody: \'{"job_id": "7f3c…", "kind": "execute_submission", "token": "9b2d…"}\',\n    MessageAttributes: { job_id, language } }]\n)\n\n-- only for messages the queue accepted:\nUPDATE jobs_job SET status = \'queued\', published_at = now()\n WHERE id = \'7f3c…\';\n\n# JOB_TRANSPORT=local (built today): the same message goes to a\n# thread pool in the relay that calls lambda/exec/handler.py',
+      why: 'The queue carries a pointer, never the code or the hidden test answers. Postgres stays the single source of truth.',
+      fail: '<b>Relay crashes after sending, before marking queued:</b> the job is sent twice. Harmless, because claiming (step 6) lets only one handler grade it. <b>Queue unreachable:</b> the job stays pending with “publish failed” in last_error and is retried on the next tick.' },
+
+    { phase: 'Hand off', title: 'SQS triggers Lambda', route: ['sqs', 'lambda'], state: 'queued',
+      payload: '// event Lambda receives\n{\n  "Records": [{\n    "messageId": "…",\n    "body": "{\\"job_id\\": \\"7f3c…\\", \\"kind\\": \\"execute_submission\\", \\"token\\": \\"9b2d…\\"}"\n  }]\n}\n\n// handler returns the records to retry:\n{ "batchItemFailures": [] }',
+      why: 'SQS absorbs exam bursts and Lambda scales per message. While a message is being worked on, SQS hides it from other consumers.',
+      fail: '<b>Lambda crashes or times out (90 s):</b> nothing acknowledges the message, so SQS shows it again after the 540 s visibility timeout (about 9 minutes), and the new invocation claims with a new token. After 3 unacknowledged receives the message moves to codemas-exec-dlq. Locally the transport redelivers after 2 s and 5 s, and then the sweep requeues the job once its lease expires.' },
+
+    { phase: 'Execute', title: 'Lambda claims the job from Django', route: ['lambda', 'django', 'postgres'], state: 'running',
+      payload: 'POST /internal/jobs/claim/\n{ "job_id": "7f3c…", "token": "9b2d…" }\n-- token = HMAC-SHA256(JOB_SIGNING_SECRET, "job:" + job_id), minted by the relay\n\n-- Django: one locked read decides every outcome\nSELECT ... FROM jobs_job WHERE id = \'7f3c…\' FOR UPDATE;\n--   finished → 409 done   live lease → 409 busy\n--   attempt already 3 → dead, 410\nUPDATE jobs_job SET status = \'running\', lease_token = \'c91e…\',\n       lease_expires_at = now() + 150 s, attempt = attempt + 1\n WHERE id = \'7f3c…\';\n\n→ { "lease_token": "c91e…", "submission_id": 10807,\n    "language": "python", "code": "...",\n    "tests": [{ "id": 301, "input": "..." }, …],   // no expected outputs\n    "limits": { "timeout_s": 10, "python_memory_mb": 256,\n                "node_heap_mb": 192, "output_kb": 64 } }',
+      why: 'Lambda holds no database password, no shared secret and no answers, so student code running beside it can never reach the database or forge another job\'s token. The lease and token stop two handlers from grading the same job. The 150 s lease outlives the 90 s function timeout.',
+      fail: '<b>Job already finished:</b> 409 done, and the duplicate message is acknowledged. <b>Another handler holds a live lease:</b> 409 busy, and the message is retried later. <b>Out of attempts:</b> 410 dead; the submission becomes “error” and doesn’t count. <b>Wrong or missing job token:</b> 401.' },
+
+    { phase: 'Execute', title: 'Lambda runs the tests in a sandbox', route: ['lambda'], state: 'running',
+      payload: 'write code to <tmp>/job-…/main.py   (or main.js)\n\nfor each test, in order:\n  child: python -I main.py  |  node --max-old-space-size=192 main.js\n  no shell, empty environment, own process group\n  rlimits: CPU 10 s, file size 1 MB, 32 processes (Linux),\n           address space 256 MB (Python)\n  wall-clock timeout 10 s kills the whole group\n  stdout and stderr capped at 64 KB\n  after the first student timeout, the rest are "Not run"\n\nno secret and no expected outputs in the Lambda to steal\nknown limits: internet egress, role credentials (accepted)\non Lambda: temp dir wiped, leftover processes killed between runs',
+      why: 'Student code runs in its own limited child process, separate from the grader. The Lambda holds only this job\'s token, never the signing secret. The handler only reports raw output; Django decides pass or fail.',
+      fail: '<b>Infinite loop or crash in student code:</b> “Time limit exceeded” or the error. That is a normal failing grade, never retried. <b>Grader error, or the Lambda running out of time before any student timeout:</b> the handler calls /fail/. The job goes back to pending, the relay republishes it, and the message is acknowledged. Never a failing grade.' },
+
+    { phase: 'Record', title: 'Lambda completes, Django records the result', route: ['lambda', 'django', 'postgres'], state: 'succeeded',
+      payload: 'POST /internal/jobs/complete/\n{\n  "job_id": "7f3c…", "token": "9b2d…", "lease_token": "c91e…",\n  "results": [\n    { "test_id": 301, "output": "2", "error": "", "ms": 41, "timed_out": false },\n    { "test_id": 302, "output": "", "error": "ValueError…", "ms": 38, "timed_out": false } ]\n}\n\n-- Django, one transaction, only if the lease token still owns the job:\n-- pass = output.strip() == expected.strip()\nwrite results_result rows;  UPDATE submissions_submission SET status = \'failed\';\nUPDATE jobs_job SET status = \'succeeded\';\n-- after commit: normalise code, notify, queue rubric + hint (Celery)',
+      why: 'Only the current lease holder can write. A slow or duplicate handler with an old lease token can never overwrite a newer result.',
+      fail: '<b>Stale lease token:</b> 409, nothing is written, and the message is acknowledged. <b>Django unreachable:</b> the message is retried; the lease expires after 150 s and the next delivery claims it and gets a new lease token.' },
+
+    { phase: 'Show', title: 'The browser polls until the result is final', route: ['browser', 'django'], state: 'succeeded',
+      payload: 'GET /api/submissions/10807/status/\n  now, then 1 s ×5, 2 s ×2, then every 3 s; after 2 min every 10 s\n\n→ { "id": 10807, "status": "failed", "results_ready": true,\n    "job": { "status": "succeeded", "attempt": 1,\n             "queued_at": "…", "started_at": "…", "finished_at": "…" } }\n\nthen GET /api/results/10807/   per-test breakdown',
+      why: 'Polling survives a page refresh and needs no open connection. The tracker moves Queue, Execute, Grade as the job status changes, and never moves backwards. A retry shows “Retrying…”; a wait over 10 s shows “Taking longer than usual…”.',
+      fail: '<b>Student refreshes mid-grading:</b> the submission ID is kept per question in sessionStorage, so polling resumes where it was. <b>Job dead:</b> the student is told it couldn’t be graded and doesn’t count as an attempt.' }
+  ];
+
+  var groups = [];
+  STEPS.forEach(function (s, i) {
+    var last = groups[groups.length - 1];
+    if (!last || last.phase !== s.phase) groups.push({ phase: s.phase, steps: [i] });
+    else last.steps.push(i);
+  });
+
+  var current = 0, timer = null, self;
+  var $ = function (id) { return document.getElementById('gp-' + id); };
+  var dotGroups = $('dot-groups');
+  var dots = [];
+
+  groups.forEach(function (g) {
+    var wrap = document.createElement('div');
+    wrap.className = 'gp-dot-group';
+    wrap.dataset.phase = g.phase;
+    var label = document.createElement('span');
+    label.className = 'gp-label';
+    label.textContent = g.phase;
+    var row = document.createElement('div');
+    row.className = 'gp-dots';
+    g.steps.forEach(function (i) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'gp-dot';
+      b.id = 'gp-dot-' + (i + 1);
+      b.textContent = String(i + 1);
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + STEPS[i].title);
+      b.addEventListener('click', function () { lastActive = self; stop(); go(i); });
+      row.appendChild(b);
+      dots[i] = b;
+    });
+    wrap.appendChild(label);
+    wrap.appendChild(row);
+    dotGroups.appendChild(wrap);
+  });
+
+  var msgs = Array.prototype.slice.call(document.querySelectorAll('#gp-seq .gp-msg'));
+
+  function chip(key) {
+    var a = ACTORS[key];
+    return '<span class="gp-chip" style="color:' + a.ink + '">' + a.name + '</span>';
+  }
+
+  function go(i) {
+    current = Math.max(0, Math.min(STEPS.length - 1, i));
+    var s = STEPS[current];
+    $('phase').textContent = s.phase;
+    $('banner-title').textContent = s.title;
+    $('count').textContent = 'Step ' + (current + 1) + ' of ' + STEPS.length;
+    $('d-title').textContent = (current + 1) + '. ' + s.title;
+    $('d-route').innerHTML = s.route.map(chip).join('<span class="gp-arrow">→</span>');
+    $('d-payload').textContent = s.payload;
+    $('d-why').textContent = s.why;
+    $('d-fail').innerHTML = s.fail;
+
+    var idx = s.state ? STATES.indexOf(s.state) : -1;
+    $('d-states').innerHTML = (idx < 0 ? '<span class="gp-state">no job yet</span><span class="gp-state-sep">→</span>' : '') +
+      STATES.map(function (st, k) {
+        var cls = k === idx ? 'gp-state on' : (k < idx ? 'gp-state past' : 'gp-state');
+        return '<span class="' + cls + '">' + st + '</span>';
+      }).join('<span class="gp-state-sep">→</span>');
+
+    msgs.forEach(function (m) {
+      var step = Number(m.dataset.step) - 1;
+      m.classList.toggle('active', step === current);
+      m.classList.toggle('done', step < current);
+    });
+    dots.forEach(function (d, k) {
+      d.classList.toggle('active', k === current);
+      d.classList.toggle('done', k < current);
+      d.setAttribute('aria-selected', k === current ? 'true' : 'false');
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.gp-dot-group'), function (g) {
+      g.classList.toggle('current', g.dataset.phase === s.phase);
+    });
+    $('prev').disabled = current === 0;
+    $('next').disabled = current === STEPS.length - 1;
+  }
+
+  function stop() {
+    if (timer) { clearInterval(timer); timer = null; }
+    $('play').textContent = 'Play';
+  }
+  function play() {
+    if (timer) { stop(); return; }
+    if (current === STEPS.length - 1) go(0);
+    $('play').textContent = 'Pause';
+    timer = setInterval(function () {
+      if (current >= STEPS.length - 1) { stop(); return; }
+      go(current + 1);
+    }, 3800);
+  }
+
+  $('prev').addEventListener('click', function () { lastActive = self; stop(); go(current - 1); });
+  $('next').addEventListener('click', function () { lastActive = self; stop(); go(current + 1); });
+  $('play').addEventListener('click', function () { lastActive = self; play(); });
+
+  go(0);
+
+  // same shape as makeAnimator's players, so the shared keyboard handler can drive it
+  self = {
+    next: function () { go(current + 1); },
+    prev: function () { go(current - 1); },
+    togglePlay: play,
+    stopPlay: stop
+  };
+  return self;
+})();
+
+// default keyboard target is the grading pipeline
+lastActive = gpPlayer;
 
 document.addEventListener('keydown', e => {
   if (!lastActive) return;

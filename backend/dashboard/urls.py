@@ -1,8 +1,12 @@
 from django.urls import path
-from .views import DashboardView, StudentsListView, StudentDetailView, ExamHistoryView, ExamDetailView, CostAnalysisView
+from .views import (
+    DashboardView, StudentsListView, StudentDetailView, ExamHistoryView,
+    ExamDetailView, CostAnalysisView, DashboardHealthView,
+)
 
 urlpatterns = [
     path('', DashboardView.as_view()),
+    path('health/', DashboardHealthView.as_view()),
     path('students/', StudentsListView.as_view()),
     path('students/<int:student_id>/', StudentDetailView.as_view()),
     path('exams/', ExamHistoryView.as_view()),

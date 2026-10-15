@@ -1,31 +1,106 @@
+/*
+ * CodeMas theme: light, inspired by masaischool.com.
+ * - --accent is Masai red (#ED0331): primary actions (solid pill buttons),
+ *   active navigation, focus rings and completed pipeline stages.
+ * - --red is the same hue but means FAILURE. Failure is always shown as red
+ *   text, a red outline or a blush (--red-dim) row, never as a solid red
+ *   button, so an action and a failed state never look alike.
+ * - green (--green, --green-ink) means accepted/pass ONLY. It is never brand.
+ * - "-ink" variants are contrast-safe for TEXT on light surfaces; base colors
+ *   (--green, --red, --yellow...) are for fills, dots and bars.
+ * - The code editor stays dark (--code-bg) inside the light app.
+ */
 :root {
-    --bg:         #0a0a0a;
-    --surface:    #111111;
-    --surface2:   #1a1a1a;
-    --surface3:   #222222;
-    --border:     #2a2a2a;
-    --border2:    #333333;
+    --bg:         #FFFAFB;   /* page: Masai warm off-white */
+    --surface:    #FFFFFF;   /* panels, cards, inputs */
+    --surface2:   #F6EDE7;   /* Masai cream: table headers, bands, chips */
+    --surface3:   #F3DEDE;   /* Masai blush: bar tracks, hover */
+    --border:     #EDE4E4;
+    --border2:    #E0D4D4;
 
-    --red:        #e63946;
-    --red-hover:  #c1121f;
-    --red-dim:    rgba(230, 57, 70, 0.12);
-    --red-glow:   rgba(230, 57, 70, 0.25);
+    --red:        #ED0331;
+    --red-hover:  #C4022A;
+    --red-dim:    #FFF0F3;   /* failed rows, error panels */
+    --red-glow:   rgba(237, 3, 49, 0.18);
 
-    --text:       #f0f0f0;
-    --text-muted: #888888;
-    --text-dim:   #555555;
+    --text:       #21191B;   /* Masai warm near-black */
+    --text-muted: #544D4F;
+    --text-dim:   #6B6365;   /* smallest text that still passes 4.5:1 on white */
 
-    --green:      #2ecc71;
-    --green-dim:  rgba(46, 204, 113, 0.12);
-    --yellow:     #f1c40f;
-    --yellow-dim: rgba(241, 196, 15, 0.12);
-    --blue:       #3498db;
-    --blue-dim:   rgba(52, 152, 219, 0.12);
+    --green:      #16A34A;
+    --green-dim:  #E7F6EC;
+    --yellow:     #D97706;
+    --yellow-dim: #FEF3E2;
+    --blue:       #2563EB;
+    --blue-dim:   #E8EFFD;
 
-    --radius-sm:  6px;
-    --radius:     10px;
-    --radius-lg:  14px;
+    --radius-sm:   8px;
+    --radius:      16px;
+    --radius-lg:   20px;
+    --radius-pill: 999px;
 
-    --shadow:     0 2px 12px rgba(0,0,0,0.4);
-    --shadow-lg:  0 8px 32px rgba(0,0,0,0.6);
+    --shadow:     none;
+    --shadow-lg:  0 12px 32px rgba(33, 25, 27, 0.10);
+
+    /* Brand */
+    --accent:       #ED0331;
+    --accent-hover: #C4022A;
+    --accent-ink:   #FFFFFF; /* text ON accent fills */
+    --accent-tint:  #FFE1E7; /* active nav, selected rows */
+    --code-bg:      #1F1A1C; /* dark editor / code blocks inside the light app */
+    --code-text:    #F5EFEF;
+
+    /* Text-safe "ink" colors for TEXT on light surfaces */
+    --green-ink:  #0E7A4F;
+    --red-ink:    #C8022B;
+    --amber-ink:  #B45309;
+    --purple-ink: #6D28D9;
+    --indigo-ink: #4338CA;
+
+    /* Pipeline tracker: one brand colour for completed stages (see PipelineTracker.vue) */
+    --c-browser:  #ED0331;
+    --c-api:      #ED0331;
+    --c-redis:    #ED0331;
+    --c-worker:   #ED0331;
+    --c-postgres: #ED0331;
+
+    /* Fonts: Poppins for headings and interface labels (Masai), Inter for reading text */
+    --font-display: 'Poppins', 'Inter', system-ui, sans-serif;
+    --font-sans:    'Inter', system-ui, sans-serif;
+    --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+
+    /* Type scale */
+    --fs-xs:   12px;
+    --fs-sm:   13px;
+    --fs-base: 15px;
+    --fs-md:   18px;
+    --fs-lg:   24px;
+    --fs-xl:   34px;
+}
+
+/*
+ * Flag confidence = confidence that a behavioural flag indicates misconduct
+ * (high = 3+ signals). One colour mapping everywhere, applied through
+ * confidenceClass()/confidenceTextClass() in utils/metrics.ts.
+ * Pages own the badge shape; these classes only set colour.
+ */
+.conf-high   { background: var(--red-dim);    color: var(--red-ink); }
+.conf-medium { background: var(--yellow-dim); color: var(--amber-ink); }
+.conf-low    { background: var(--surface2);   color: var(--text-muted); }
+/* !important like the pages' .text-red helpers: beats scoped .kpi-value colours */
+.conf-text-high   { color: var(--red-ink) !important; }
+.conf-text-medium { color: var(--amber-ink) !important; }
+.conf-text-low    { color: var(--text-muted) !important; }
+
+/* Text for screen readers only (e.g. what a sidebar count badge means) */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }

@@ -1,7 +1,5 @@
 # CodeMas — System Design Knowledge Base
 
-**Prepared for:** Interview with Drew Barclay at Entrupy  
-**Role:** Senior Full-Stack Engineer  
 **Author:** Swanand Kadam  
 **Date:** May 2026
 
@@ -27,11 +25,8 @@
 13. [Authentication and Authorization](#13-authentication-and-authorization)
 14. [Concurrency and Scaling](#14-concurrency-and-scaling)
 15. [Infrastructure Cost Comparison — EC2 vs Fargate vs Lambda](#15-infrastructure-cost-comparison--ec2-vs-fargate-vs-lambda)
-16. [Entrupy Parallels](#16-entrupy-parallels)
 17. [Known Gaps and Honest Limitations](#17-known-gaps-and-honest-limitations)
 18. [Testing Strategy](#18-testing-strategy)
-19. [Live Dashboard Walkthrough — Interview Guide](#19-live-dashboard-walkthrough--interview-guide)
-20. [What to Say to Drew — Quick Reference](#20-what-to-say-to-drew--quick-reference)
 
 ---
 
@@ -50,10 +45,10 @@ CodeMas is a real-time coding exam platform built to demonstrate systems thinkin
 
 **Trainer Flow:**
 1. Build exam — add questions, test cases (hidden), set duration
-2. Enroll students
-3. Monitor live cohort dashboard during exam
-4. After exam closes — review plagiarism flags (behavioural + similarity)
-5. Review individual submission detail, annotate flags, confirm/dismiss
+2. Pick who takes it — the whole cohort (default) or some sections (`Exam.sections`, matched against each student's `User.cohort`). Going live (Activate now on a draft's exam report, the scheduler's auto-open, or creating it live) enrolls that audience automatically; nobody is ever un-enrolled, and the per-student API (`/api/exams/{id}/enrollments/`) stays for exceptions
+3. Monitor the live exam on its exam report (`/dashboard/history/<id>`: attempts and latest submission per student, End exam); trainers opening `/exams/<id>` are sent there, and the old exam operations URL redirects there
+4. After exam closes (end_time, Close exam, or the last enrolled student submits the exam) — or any time via **Run plagiarism check** on the exam report — review plagiarism flags (behavioural + similarity)
+5. Review individual submission detail, confirm/dismiss with a note — the student sees the verdict and note on their results page
 
 ### Scale Target
 10,000 concurrent students. This is the load number that informs every design decision.
@@ -69,20 +64,21 @@ CodeMas is a real-time coding exam platform built to demonstrate systems thinkin
                            │  CodeMirror 6   Pinia Store   ECharts        │
                            │  (editor)       (state)       (charts)       │
                            │                                               │
-                           │  EventSource ←────────────── SSE stream      │
-                           │  Axios       ──────────────→ REST API        │
-                           └────────────────┬────────────────┬────────────┘
-                                            │ HTTP/REST       │ SSE (text/event-stream)
-                                            ▼                 ▼
+                           │  Axios  ──────────────→ REST API             │
+                           │  polls GET /submissions/{id}/status/         │
+                           └────────────────┬─────────────────────────────┘
+                                            │ HTTP/REST (JWT)
+                                            ▼
                            ┌─────────────────────────────────────────────┐
                            │            Django 4.2 + DRF + Gunicorn       │
                            │                                               │
-                           │  /api/submissions/create/   POST             │
-                           │  /api/submissions/{id}/stream/  GET (SSE)    │
-                           │  /api/plagiarism/flags/     GET              │
-                           │  /api/plagiarism/search/    POST             │
-                           │  /api/dashboard/            GET              │
-                           │  /api/cost/                 GET              │
+                           │  /api/submissions/create/        POST        │
+                           │  /api/submissions/{id}/status/   GET (poll)  │
+                           │  /api/plagiarism/flags/          GET         │
+                           │  /api/plagiarism/search/         POST        │
+                           │  /api/dashboard/                 GET         │
+                           │  /internal/jobs/claim|complete|fail  POST    │
+                           │    (per-job token, for the executor only)    │
                            │                                               │
                            │  Simple JWT auth   |   Role-based guards     │
                            └────────┬─────────────────────┬───────────────┘
@@ -92,37 +88,31 @@ CodeMas is a real-time coding exam platform built to demonstrate systems thinkin
                     │   (ACID writes)  │      │                          │
                     │                 │      │  Broker (Celery queue)   │
                     │  Users          │      │  Cache (10s TTL)         │
-                    │  Exams          │      │  Pub/Sub (SSE delivery)  │
-                    │  Questions      │      │  JWT blacklist           │
-                    │  Submissions    │      └──────────┬───────────────┘
-                    │  BehaviouralFlag│                 │
-                    │  PlagiarismFlag │      ┌──────────▼───────────────┐
-                    │  PlagiarismPolicy│     │    Celery Workers        │
-                    └──────────────────┘    │                          │
-                                            │  execute_submission      │
-                                            │  run_exam_plagiarism_    │
-                                            │    check (Phase 1+2)     │
-                                            │  run_question_plagiarism_│
-                                            │    check                 │
-                                            │  auto_manage_exams       │
-                                            │    (Celery Beat, 60s)    │
-                                            └──────────┬───────────────┘
-                                                       │
-                                            ┌──────────▼───────────────┐
-                                            │    Docker Engine         │
-                                            │                          │
-                                            │  python:3.11-alpine      │
-                                            │  node:18-alpine          │
-                                            │  openjdk:17-slim         │
-                                            │  gcc:12                  │
-                                            │                          │
-                                            │  --memory=128m           │
-                                            │  --cpus=0.5              │
-                                            │  --network=none          │
-                                            │  --pids-limit=10         │
-                                            │  --read-only             │
-                                            │  5s timeout kill         │
-                                            └──────────────────────────┘
+                    │  Exams          │      │  JWT blacklist           │
+                    │  Questions      │      └──────────┬───────────────┘
+                    │  Submissions    │                 │
+                    │  Jobs (outbox)  │      ┌──────────▼───────────────┐
+                    │  BehaviouralFlag│      │    Celery Workers        │
+                    │  PlagiarismFlag │      │                          │
+                    │  PlagiarismPolicy│     │  execute_submission      │
+                    └───────┬──────────┘    │    (C++ / Java only)     │
+                            │               │  score_rubric, hints     │
+                            │ pending jobs  │  run_exam_plagiarism_    │
+                            │ SKIP LOCKED   │    check (Phase 1+2)     │
+                    ┌───────▼──────────┐    │  auto_manage_exams       │
+                    │  Relay           │    │    (Celery Beat, 60s)    │
+                    │  manage.py       │    └──────────────────────────┘
+                    │  run_relay       │
+                    └───────┬──────────┘
+                            │ {job_id} only
+                    ┌───────▼──────────────────────────────────────────┐
+                    │  Executor: lambda/exec/handler.py + sandbox.py    │
+                    │  local:  thread pool inside the relay             │
+                    │  live (2026-10-05): SQS codemas-exec → Lambda     │
+                    │                    codemas-exec (arm64, Py+Node)  │
+                    │  claims code + tests from Django, runs each test  │
+                    │  in an rlimited child process, posts outputs back │
+                    └──────────────────────────────────────────────────┘
 ```
 
 ### Django App Structure
@@ -132,20 +122,27 @@ backend/
 ├── accounts/        # User model (Student / Trainer / Admin roles)
 ├── exams/           # Exam, Question, TestCase, ExamEnrollment models
 │                    # + auto_manage_exams Celery Beat task
-├── submissions/     # Submission model, create/list/detail views
-│                    # + SSE streaming endpoint (sse.py)
-├── execution/       # execute_submission task — runs Docker
-│                    # (Lambda executor stub — commented out)
+├── submissions/     # Submission model, create/list/detail/status views
+│                    # (the SSE stream, sse.py, was removed; the frontend polls /status/)
+├── jobs/            # Job outbox model, relay (run_relay), transports (local / sqs),
+│                    # claim/complete/fail API for the executor (per-job token)
+├── execution/       # legacy execute_submission Celery task — C++ and Java only
+│                    # (run_local: dev-only subprocess executor, no sandbox)
 ├── results/         # Result model — per-test-case outcome
 ├── plagiarism/      # BehaviouralFlag, PlagiarismFlag, PlagiarismPolicy
 │                    # + all detection tasks + code similarity search
 ├── dashboard/       # Trainer KPI view, student detail, exam history
 │                    # + CostAnalysisView (Fargate pricing model)
 ├── leaderboard/     # Student score/streak views
+├── analytics/       # metrics.py — the single source of truth for every rate
+│                    # (success rate = students who passed, flagged students, took, flags to review, risk)
 ├── ai/              # Async GPT features (additive layer, off the critical path):
 │                    # rubric scoring, Socratic hints, plagiarism explanations
 │                    # — models, tasks, shared OpenAI client (llm.py), read-only API
 └── codemas/         # settings.py, urls.py, celery.py, signals.py
+
+lambda/exec/         # the executor: handler.py + sandbox.py (standard library only);
+                     # run by the relay's local transport locally, and live as the codemas-exec Lambda since 2026-10-05
 ```
 
 ---
@@ -160,22 +157,31 @@ backend/
 | Code editor | CodeMirror 6 | Monaco, Ace | Modular, tree-shakeable, great mobile support |
 | State management | Pinia | Vuex, Redux | Lighter, TypeScript-native |
 | Charts | ECharts | Chart.js, D3 | Large dataset performance (10k students) |
-| Real-time delivery | SSE (EventSource) | WebSockets, polling | Server→client only; SSE is the right tool |
+| Result delivery | Polling `/status/` (1 s → 3 s backoff) | SSE, WebSockets | Survives refresh and needs no open connection or pub/sub; SSE was the original choice (§7) |
 | Backend framework | Django 4.2 + DRF | FastAPI, Node.js | ORM, migrations, admin, batteries included |
 | Authentication | Simple JWT | Session auth, OAuth | Stateless, works for mobile/SPA clients |
-| Async jobs | Celery + Redis | AWS SQS + Lambda | Needs persistent process for pub/sub + Beat |
-| Code execution | Docker | Lambda, vm2, Judge0 | See section 6 for full reasoning |
+| Async jobs | Transactional outbox + relay for execution (SQS, live since 2026-10-05); Celery + Redis for AI, plagiarism, Beat and C++/Java | Celery for everything | The outbox makes "saved but never queued" impossible; Beat and the plagiarism batch still need a long-lived worker |
+| Code execution | Python/JS: `lambda/exec` sandbox (local thread pool in dev, Lambda in production since 2026-10-05). C++/Java: legacy Celery `run_local` | Docker, vm2, Judge0 | See §5.6 and §6 |
 | Primary DB | PostgreSQL | MySQL, MongoDB | ACID transactions — critical for attempt counting |
 | Unstructured data | MongoDB | PostgreSQL JSONB | Flexible schema for code blobs and logs |
-| Cache + broker | Redis | Memcached, RabbitMQ | Pub/Sub capability for SSE delivery |
+| Cache + broker | Redis | Memcached, RabbitMQ | Celery broker plus the cache, in one service |
 | Plagiarism scoring | TF-IDF + cosine | CodeBERT, MOSS, AST | Fast, no GPU, interpretable at 2k submissions |
-| Deployment model | Docker on EC2 | AWS Fargate, Lambda | See section 15 for cost breakdown |
+| Deployment model | Docker image on Railway: web, Celery worker and relay (deployed by `railway up`; see §5 Railway deploy rules); SQS + Lambda on AWS for the executor | EC2, Fargate | See section 15 for the original cost breakdown |
 
 ---
 
 ## 4. Data Models
 
 ### Core Models (PostgreSQL)
+
+**Terminology (2026-10-06).** A **section** is one class group (Section A–D, one
+instructor each). The **cohort** is all sections together. `User.cohort` stores the
+student's *section* (seed values `Section A`…`Section D`, renamed from `Batch-A-2025`…
+by migration `accounts.0003`); the field and API names stay `cohort`. In the UI:
+"Section rank" = rank within the section, "Cohort rank" = rank across all sections
+(the leaderboard's "Whole cohort" view). Trainers are not tied to a section: every
+trainer sees every student. Plagiarism compares everyone who answered a question,
+across sections, and the "Cohort investigation" pages are per exam, across sections.
 
 ```
 ┌──────────────────────────────────────┐
@@ -184,10 +190,11 @@ backend/
 │ id (BigAutoField PK)                 │
 │ username, email, password            │
 │ role: student | trainer | admin      │
-│ cohort: CharField(100)               │
+│ cohort: CharField(100)  ← section    │
 │                                      │
 │ @property score → points from        │
-│   passed unique questions            │
+│   passed unique questions, minus     │
+│   confirmed plagiarism (metrics)     │
 │ @property current_streak → days      │
 │   with consecutive submissions       │
 └──────────────────────────────────────┘
@@ -288,9 +295,10 @@ backend/
 │ submission → OneToOneField           │
 │ risk_score: FloatField (0.0–1.0)     │
 │ confidence: low | medium | high      │
-│   LOW  = 3+ signals (most suspicious)│
+│   (confidence flag = misconduct)     │
+│   HIGH = 3+ signals (most suspicious)│
 │   MED  = 2 signals                   │
-│   HIGH = 1 signal (least suspicious) │
+│   LOW  = 1 signal (least suspicious) │
 │                                      │
 │ -- Individual signal scores (0–1.0)  │
 │ paste_score                          │
@@ -439,125 +447,192 @@ backend/
 
 This is the end-to-end journey of a single code submission from browser to result.
 
-```
-BROWSER                     DJANGO                  REDIS               CELERY WORKER
-  │                            │                      │                       │
-  │  1. POST /submissions/     │                      │                       │
-  │     create/                │                      │                       │
-  │  {code, language,          │                      │                       │
-  │   question, had_paste,     │                      │                       │
-  │   paste_char_count,        │                      │                       │
-  │   time_to_complete,        │                      │                       │
-  │   tab_switch_count,        │                      │                       │
-  │   time_remaining}          │                      │                       │
-  │ ─────────────────────────► │                      │                       │
-  │                            │                      │                       │
-  │                            │ 2. Check attempts    │                       │
-  │                            │    cache key:        │                       │
-  │                            │    attempts:{uid}:   │                       │
-  │                            │    {qid}             │                       │
-  │                            │ ───────────────────► │                       │
-  │                            │ ◄─────────────────── │                       │
-  │                            │    returns 0-3       │                       │
-  │                            │                      │                       │
-  │                            │ 3. If >= max_attempts│                       │
-  │                            │    → 403 immediately │                       │
-  │                            │                      │                       │
-  │                            │ 4. Create Submission │                       │
-  │                            │    record (pending)  │                       │
-  │                            │    in PostgreSQL     │                       │
-  │                            │                      │                       │
-  │                            │ 5. Increment attempt │                       │
-  │                            │    counter in Redis  │                       │
-  │                            │    TTL = 86400s      │                       │
-  │                            │ ───────────────────► │                       │
-  │                            │                      │                       │
-  │                            │ 6. Queue execution   │                       │
-  │                            │    task in Redis:    │                       │
-  │                            │    execute_submission│                       │
-  │                            │ ───────────────────► │                       │
-  │                            │                      │ 7. Worker picks up    │
-  │                            │                      │    execute_submission │
-  │                            │                      │ ────────────────────► │
-  │  8. Response: 201          │                      │                       │
-  │     {id: submission_id}    │                      │                       │
-  │ ◄───────────────────────── │                      │                       │
-  │                            │                      │                       │
-  │  9. Open SSE stream:       │                      │                       │
-  │     GET /submissions/      │                      │                       │
-  │     {id}/stream/           │                      │                       │
-  │     ?token={jwt}           │                      │                       │
-  │ ─────────────────────────► │                      │                       │
-  │                            │ 10. Django subscribes│                       │
-  │                            │     to Redis channel │                       │
-  │                            │     submission:{id}  │                       │
-  │                            │ ───────────────────► │                       │
-  │                            │                      │                       │
-  │  11. SSE: {status:waiting} │                      │                       │
-  │ ◄───────────────────────── │                      │                       │
-  │                            │                      │                       │
-  │                            │                      │       12. Run Docker  │
-  │                            │                      │           container   │
-  │                            │                      │           per test    │
-  │                            │                      │           case        │
-  │                            │                      │                       │
-  │                            │                      │       13. Save Result │
-  │                            │                      │           rows to PG  │
-  │                            │                      │                       │
-  │                            │                      │       14. Update sub  │
-  │                            │                      │           status,     │
-  │                            │                      │           save        │
-  │                            │                      │           normalized_ │
-  │                            │                      │           code        │
-  │                            │                      │                       │
-  │                            │                      │ 15. Publish to        │
-  │                            │                      │     submission:{id}   │
-  │                            │                      │ ◄─────────────────── │
-  │                            │ 16. Django receives  │                       │
-  │                            │     message on       │                       │
-  │                            │     subscribed chan  │                       │
-  │                            │ ◄─────────────────── │                       │
-  │                            │                      │                       │
-  │  17. SSE: {status:passed}  │                      │                       │
-  │ ◄───────────────────────── │                      │                       │
-  │                            │                      │                       │
-  │  18. Fetch full results:   │                      │                       │
-  │     GET /results/          │                      │                       │
-  │     ?submission={id}       │                      │                       │
-  │ ─────────────────────────► │                      │                       │
-  │ ◄───────────────────────── │                      │                       │
-  │  per-test-case breakdown   │                      │                       │
-```
+**Status: live since 2026-10-05.** Production grades Python and JavaScript through outbox → relay (Railway) → SQS `codemas-exec` → Lambda `codemas-exec` (arm64, ap-southeast-1), switched on by `PIPELINE_LANGUAGES=python,javascript` on Railway backend. The Lambda holds no signing secret and authenticates with per-job tokens; the secret was rotated at cutover. The go-live smoke test graded Python and JS through the pipeline and found no `JOB_SIGNING_SECRET`; R2 (role credentials readable) and R1 (egress open) are still present, as accepted (§5.6). Locally the same code runs with `JOB_TRANSPORT=local`.
+- Python and JavaScript use the job pipeline below.
+- C++ and Java still use the legacy Celery task. The path is chosen per language by `PIPELINE_LANGUAGES`.
 
-### Attempt Limiting — Why Redis (not just PostgreSQL)
+> **Railway deploy rules (critical).** The Railway services (backend, worker, frontend, relay) are deployed by `railway up` only; they were disconnected from GitHub on 2026-10-05 after a variable change twice redeployed the old pre-pipeline commit (`902417d`) over the live upload. Any variable change: `railway variable set KEY=VALUE -s <service> --skip-deploys`, then `railway up -s <service> --detach`, from the repo root (no `--path-as-root`, no `railway redeploy`). Check: `railway deployment list -s <svc> --json`, whose active deployment's `meta` must have `cliMessage`, not `commitHash`. Details: `deploy/aws/README.md`.
 
-The attempt count is stored in Redis with `cache_key = f"attempts:{user.id}:{question_id}"`. This raises an important question: why not just count rows in the Submission table?
-
-**The problem:** Two simultaneous requests both hit `SELECT COUNT(*)` — both see 2 attempts — both create a 3rd submission — student gets 4 attempts.
-
-**Why PostgreSQL alone doesn't fully solve this without SELECT FOR UPDATE:** A naive ORM count is not atomic. You'd need a SELECT FOR UPDATE advisory lock, which adds latency and complexity.
-
-**Why Redis works here:** Redis is single-threaded and all operations are atomic. `INCR` and `SET` with TTL are atomic by design. The cache is used as a fast counter; the actual Submission record is still written to PostgreSQL for persistence. On cache miss (node restart), the system falls back gracefully — the check is best-effort protection, not the only barrier.
-
-**Why PostgreSQL still handles the canonical count:** `attempt_number` in the Submission model is the authoritative record. Redis is the fast gate.
+Related docs: `docs/dev-pipeline.md` (run it locally), `docs/demo-runbook.md` (demo and failure answers), `submission_animation.html` (step-through diagram) and `submission_flow.html` (the code at each step).
 
 ```
-ATTEMPT LIMITER FLOW:
-
-  Request arrives
-       │
-       ▼
-  cache_key = "attempts:{uid}:{qid}"
-  attempts_used = cache.get(key, default=0)   ← O(1) Redis GET
-       │
-       ├── if attempts_used >= max_attempts → 403 Forbidden immediately
-       │
-       └── else:
-               attempt_number = attempts_used + 1
-               cache.set(key, attempt_number, timeout=86400)  ← TTL 24h
-               create Submission(attempt_number=attempt_number)
-               enqueue execute_submission
+BROWSER            DJANGO                 POSTGRES          RELAY             SQS / LOCAL        LAMBDA codemas-exec
+  │ POST /api/submissions/create/           │                 │                  │                    │
+  │──────────────────►│ one transaction:     │                 │                  │                    │
+  │                   │ lock User row,       │                 │                  │                    │
+  │                   │ count attempts,      │                 │                  │                    │
+  │                   │ INSERT submission ──►│                 │                  │                    │
+  │                   │ INSERT jobs_job  ───►│ (pending)       │                  │                    │
+  │◄── 201 {id} ──────│                      │                 │                  │                    │
+  │                   │                      │◄─ SKIP LOCKED ──│ every 0.5 s      │                    │
+  │                   │                      │                 │─ {job_id,token}─►│                    │
+  │                   │                      │◄─ queued ───────│                  │── trigger ────────►│
+  │                   │◄────────────── POST /internal/jobs/claim/ {job_id, token} ─────────────────────│
+  │                   │ lease 150 s ────────►│ (running)       │                  │                    │
+  │                   │──────────── code + test inputs + limits + lease_token ───────────────────────►│
+  │                   │                      │                 │                  │     sandbox runs   │
+  │                   │◄────────────── POST /internal/jobs/complete/ (token, outputs) ─────────────────│
+  │                   │ grade, Result rows ─►│ (succeeded)     │                  │                    │
+  │ GET /api/submissions/<id>/status/  (1 s → 2 s → 3 s, 10 s after 2 min)                             │
+  │──────────────────►│                      │                 │                  │                    │
+  │◄── passed/failed ─│  then GET /api/results/<id>/           │                  │                    │
 ```
+
+### 5.1 The outbox: `jobs.Job` (`backend/jobs/models.py`, table `jobs_job`)
+
+| Field | Meaning |
+|---|---|
+| `id` (UUID) | The only thing a queue message carries |
+| `kind` | `execute_submission` |
+| `subject_id` | The submission id |
+| `status` | `pending` → `queued` → `running` → `succeeded`; also `failed` (subject deleted) and `dead` (out of attempts) |
+| `attempt` | Claims so far. The limit is `MAX_ATTEMPTS = 3` |
+| `lease_token`, `lease_expires_at` | Who may finish the job, and until when |
+| `published_at`, `started_at`, `finished_at`, `created_at`, `updated_at` | Timestamps (`queued_at` in the status API is `published_at`) |
+| `last_error` | Handler error first, then relay/sweep notes, one per line, capped at 2000 chars |
+
+A partial unique index (`one_active_job_per_subject`) allows only one `pending`/`queued`/`running` job per (`kind`, `subject_id`). The status poll (`filter(kind=, subject_id=)`, no status predicate) can't use it, so a plain index `jobs_job_subject_idx` on (`subject_id`, `kind`) backs that lookup (migration `jobs/0002`). Django admin shows the table read-only at `/admin/jobs/job/`, filterable by status.
+
+`jobs.services.enqueue()` raises unless it runs inside `transaction.atomic()`. The submission and its job commit together or not at all, and nothing is published until the commit.
+
+### 5.1b Exam page basics (2026-10-06)
+
+- **Languages:** JavaScript (default) and Python only; `SubmissionCreateSerializer` rejects anything else with 400.
+- **Starter code (HackerRank-style):** `Question.starter_code_javascript` / `starter_code_python` read stdin in the question's input format and call one function the student completes. Empty = the generic starter in `exams/starter_code.py` (every input line handed to `solve(lines)`). The API exposes `starter_code` (with the fallback) and accepts the raw fields on create; the AI exam generator writes both. The editor opens with the starter when there is no saved draft and swaps it on a language change if the code is untouched. `manage.py apply_starter_code` fills the demo exam's questions (by title) where empty.
+- **Submit exam** (finish early): `POST /api/exams/{id}/finish/` sets `ExamEnrollment.finished_at`; after that the create path returns 403 "You have already submitted this exam.", the exam page sends the student to My results, and the exam list shows "Submitted". `reset_exam_attempts` also clears `finished_at` for the named students.
+
+### 5.2 Create path (`SubmissionCreateView`)
+
+Students can only submit while the exam is open (`is_active` and now inside `[start_time, end_time)`, a null bound is unbounded, the same rule `auto_manage_exams` uses); otherwise 403 ("This exam has ended." / "hasn't started yet" / "isn't open") before the transaction, and nothing is created. Students must be enrolled in the exam to see or submit to it. Before the transaction, an unenrolled student gets 403 `{"error": "You're not enrolled in this exam."}` and nothing is created; the exam list shows a student only active exams they are enrolled in, and exam detail/questions return 404 for an unenrolled student.
+
+In one transaction:
+1. Lock the student's `User` row (`select_for_update`). Concurrent submits from the same student queue up here.
+2. Count this question's submissions, **excluding `status='error'`**. A dead job, or a question with no tests, never costs the student an attempt. If the count is already at `PlagiarismPolicy.max_attempts`, return 403.
+3. `attempt_number = max(existing) + 1`. A second concurrent submit from the same student waits on the lock, then counts the first: it becomes the next attempt, or gets 403 at the limit. A unique constraint on (`student`, `question`, `attempt_number`) is the backstop for any writer outside the lock, and a violation returns 409 ("try again").
+4. Save the submission as `pending`. If the language is in `PIPELINE_LANGUAGES`, write the job row with `enqueue()`. Otherwise, hand it to `execute_submission.delay()` on commit (legacy Celery).
+
+### 5.3 Relay: `manage.py run_relay` (`backend/jobs/relay.py`)
+
+- **Tick, every `RELAY_INTERVAL_S` (0.5 s).** Select up to 50 `pending` jobs, oldest first, `FOR UPDATE SKIP LOCKED`, and call `transport.publish_many()`. Only jobs the transport accepted become `queued` with `published_at`. The rest stay `pending` with `publish failed: …` in `last_error`. A crash between sending and marking can publish a job twice; that is harmless because claiming is idempotent.
+- **Sweep, every 60 s.** It depends on the transport, so Postgres and the SQS dead-letter queue agree on what is dead.
+
+| | Local transport | SQS transport |
+|---|---|---|
+| `running`, lease expired, `attempt` < 3 | Back to `pending` | Left to SQS redelivery (claim accepts an expired lease). Backstop: back to `pending` once the lease expired more than 30 min ago |
+| `running`, lease expired, `attempt` ≥ 3 | `dead`; submission → `error` | Same |
+| `queued` with no claim | Back to `pending` after 10 min | Back to `pending` after 30 min (longer than SQS's own 3 × 540 s ≈ 27 min of retries) |
+
+`--once` runs one tick and one sweep, waits for local handler threads, and exits.
+
+### 5.4 Transports (`JOB_TRANSPORT`, `backend/jobs/transports.py`)
+
+Both send only `{"job_id": "<uuid>", "kind": "execute_submission", "token": "<hex>"}`. The token is `HMAC-SHA256(JOB_SIGNING_SECRET, "job:" + job_id)`, minted by the relay (trusted, on Railway); the executor never holds the secret.
+
+- **`local`** (laptops and tests; the built default). The relay loads `lambda/exec/handler.py` and calls `handler(event, None)` in a 4-thread pool, with an SQS-shaped event. It emulates SQS redelivery: up to 3 deliveries, with 2 s and 5 s backoff. With no Lambda context there is no time-budget guard.
+- **`sqs`** (production, live since 2026-10-05). `send_message_batch` to `codemas-exec`, 10 per call, with message attributes `job_id` and `language`. The botocore client has connect 3 s / read 5 s timeouts and 3 attempts, because the relay holds its row locks while publishing. A failed chunk leaves the rest of the batch `pending` for the next tick.
+- Any other value raises `ImproperlyConfigured`. There is no silent fallback that would run student code on the web host.
+
+AWS side (live since 2026-10-05):
+- One queue, `codemas-exec`, with DLQ `codemas-exec-dlq` (`maxReceiveCount` 3) and a visibility timeout of 540 s.
+- One function, `codemas-exec`: a Python 3.12 zip plus the `codemas-node22` Node 22 layer, on **arm64 (Graviton)**, with a 90 s timeout. The only configured variable is `CODEMAS_API_URL` (plus a pinned `PATH`): no secret. Lambda also injects the execution role's temporary AWS credentials into the environment, and student code can read them (accepted risk R2, §5.6).
+
+### 5.5 Internal API (`/internal/jobs/…`, `backend/jobs/views.py`)
+
+Every request carries the **per-job token** from the SQS message in its JSON body:
+- Django recomputes `HMAC-SHA256(JOB_SIGNING_SECRET, "job:" + job_id)` and compares with `hmac.compare_digest`. A wrong or missing token gets 401. A malformed body or a non-UUID `job_id` gets 400.
+- `complete` and `fail` also need the `lease_token` that claim returned, so a stale run can't overwrite a newer one.
+- A token works only for its own job. There is no request signing (`X-Timestamp`/`X-Signature` were removed on 2026-10-04: they needed the secret inside the Lambda).
+- User sessions and JWTs are not accepted.
+- `JOB_SIGNING_SECRET` lives on web and relay only. With `DEBUG` off, an empty, default (`dev-only-change-me`) or shorter-than-32-character secret fails system check `jobs.E001`, so `migrate` (web start) and `run_relay` refuse to run; a process started with `--skip-checks` still answers 503 on every internal endpoint.
+- The handler sends UTF-8 JSON (`ensure_ascii=False`) and keeps the `complete` body under 2,000,000 bytes, below Django's 2.5 MB `DATA_UPLOAD_MAX_MEMORY_SIZE`: while it is larger, the cap for every output and error is halved alike, with an `[output truncated]` marker. The handler never sees expected outputs, so it can't spare a correct one: a correct output is lost only when the whole body exceeds ~2 MB (about 30+ tests near the 64 KB cap), a documented limit. Huge student output is therefore graded, never a 400 that ends as a dead job.
+
+| Endpoint | Behaviour |
+|---|---|
+| `POST claim/ {job_id, token}` | One locked read (`select_for_update`) decides every outcome. Terminal job → 409 `done`. Live lease → 409 `busy`. Subject deleted → job `failed`, 410 `gone`. `attempt` already 3 → job `dead`, submission `error`, 410 `dead`. Otherwise: `running`, new `lease_token`, `lease_expires_at = now + JOB_LEASE_SECONDS` (150 s, longer than the 90 s function timeout), `attempt += 1`, submission `running`. Returns the lease token plus `submission_id`, `language`, `code`, `tests [{id, input}]` (**no expected outputs**: they never leave Django) and `limits` (`timeout_s` 10, `python_memory_mb` 256, `node_heap_mb` 192, `output_kb` 64). |
+| `POST complete/ {job_id, token, lease_token, results}` | One transaction. The lease token must match a `running` job, or 409 `stale` and nothing is written. Django grades, with the legacy pass rule `output.strip() == expected.strip()`. It writes `Result` rows (`update_or_create`) and sets the submission to `passed`/`failed`. A question with no tests becomes `error`, never a pass. The job becomes `succeeded`. On commit, `after_grading()` runs the legacy side effects: normalise the code, `notify_result_ready`, and queue the Celery rubric task, plus the hint task if the answer failed. |
+| `POST fail/ {job_id, token, lease_token, error}` | The handler gave up (an infrastructure problem). Release the lease and put the job back to **`pending`**, so the relay republishes it on the next tick in either transport. The attempt still counts. |
+
+### 5.6 Executor: `lambda/exec/handler.py` + `sandbox.py`
+
+Standard library only. No database credentials, no shared secret, no expected outputs. The same file runs on Lambda and inside the local transport.
+
+For each record, the handler:
+1. **Checks its time.** If less than 30 s of Lambda time is left, it doesn't claim, because a claim would spend an attempt. Instead it returns the record in `batchItemFailures`. The message comes back after the 540 s visibility timeout, and the skip spends one receive toward the DLQ.
+2. **Claims** with the message's `job_id` and `token`. `done`, `gone` and `dead` are acknowledged. Anything else, including `busy`, is reported in `batchItemFailures` so SQS retries it.
+3. **Runs the tests in order.** After the **first student timeout** the remaining tests are reported "Not run". The grade is already decided, so they don't each burn 10 s. If the **Lambda's own time** runs out before any student timeout, the handler raises `BudgetExhausted` and calls `/fail/`. That is an infrastructure limit, never a failing grade. Any other grader exception also goes to `/fail/`.
+4. **Acknowledges after a successful `/fail/`.** Once the job is `pending`, the relay owns the retry, and an SQS retry on top would only push the message toward the DLQ. If `/fail/` itself fails, the message is reported for retry.
+5. **Completes,** then logs one JSON line: `job_id`, `submission_id`, `language`, `tests`, `submission_status`, `complete` (HTTP status) and `duration_ms`. A 409 `stale` on complete is acknowledged.
+
+**Sandbox (`sandbox.py`), per test.**
+- **Process.** `subprocess.Popen` with no shell, `env={}` and a fresh temp working directory. Python runs `python -I main.py`; JavaScript runs `node --max-old-space-size=192 main.js`.
+- **Session and limits.** The child gets its own session (`start_new_session`). `preexec_fn` sets these rlimits:
+  - CPU = `timeout_s`
+  - file size 1 MB
+  - address space 256 MB (Python only)
+  - 32 processes (Linux)
+  - If running as root, it drops to `nobody`.
+- **Timeout and output.** A 10 s wall-clock timeout, then `killpg(SIGKILL)` on the whole group, which always runs. stdout and stderr are each read through a 64 KB-capped buffer.
+- **No network where the kernel allows it (Linux; not real Lambda).** Last in `preexec_fn`, the child sets `PR_SET_NO_NEW_PRIVS` and installs a seccomp-BPF filter (x86_64 and aarch64). The filter is proven natively on arm64 (aarch64), the architecture the Lambda runs on; the x86_64 branch is a fallback, checked only by the BPF-interpreter test. `socket()` is allowed for `AF_UNIX` only; every other family, including `AF_INET`/`AF_INET6`, gets `EACCES`. `io_uring_setup` gets `EPERM`, and any non-native syscall ABI (x32, i386, arm32) kills the process. It fails open if the kernel refuses the filter. The handler logs `{"event": "sandbox_selfcheck", "egress_blocked": …}` at each cold start, and the smoke test's egress probe checks it on real Lambda. **Real Lambda refuses it** (`egress_blocked=false`): accepted risk R1 below.
+- **Grader protection.** At import, the handler calls `prctl(PR_SET_DUMPABLE, 0)`, so student code can't read the grader's own `/proc/<ppid>/environ` or `/proc/<ppid>/mem`. On real Lambda that is not enough: another runtime process (`/proc/2/environ`) still exposes the role's AWS credentials (R2 below). There is no secret left to steal there: the grader holds only the current job's token.
+- **Between runs on Lambda** (`AWS_LAMBDA_FUNCTION_NAME` set) **or with `CODEMAS_EXEC_SCRUB=1`:** the whole temp dir is wiped, including directories the student locked with `chmod`. Every same-uid process started after the grader is SIGKILLed, which catches `setsid()` escapees. This is off elsewhere, because on a developer's machine it would kill their processes.
+
+**Security model: one Lambda, guardrails, known limits** (decided 2026-10-04 after the first production smoke test; spec `docs/superpowers/specs/2026-10-04-lambda-guardrails.md`). One Lambda; the handler runs student code in a constrained child process. Guardrails: no secrets or answers in the Lambda, per-job tokens. Known limits, **accepted, not fixed**:
+- **R1, egress.** Real Lambda refuses the seccomp filter (`egress_blocked=false`; smoke probe `EGRESS_OPEN`), so student code can open internet connections. Abuse is bounded by CPU time per test, maximum concurrency 5, 3 attempts per question and the submission throttle.
+- **R2, role credentials.** Lambda always injects the role's credentials, and student code can read them. The trigger role can `sqs:ReceiveMessage`, `sqs:DeleteMessage` and `sqs:ChangeMessageVisibility` on `codemas-exec`. So a determined student with a working solution could take a classmate's queued message (job id and token), claim that job first, read the classmate's code and test inputs, and post outputs that forge a pass or a fail; the classmate's real delivery then gets 409 `done`, so nothing looks wrong. They can also delete or hide queued messages, delaying other students' grading until the 30-minute sweep. Exposure is highest under an exam-deadline backlog (concurrency 5), when every queued message waits longest.
+- What still holds: the signing secret and the expected answers never enter the Lambda, and a student can't pass their own submission without correct output.
+- There is no kernel boundary between grader and child (the whole function shares one Firecracker microVM).
+
+The real fix for R1 and R2 is future work: the two-function split, the standard pattern for online judges. A runner with a zero-permission role, in a VPC with no NAT or internet gateway and a security group with no outbound rules, is invoked by the grader, which reads its return value.
+
+### 5.7 Status endpoint and polling
+
+`GET /api/submissions/<id>/status/` (owner or trainer) returns `{id, status, results_ready, job: {status, attempt, queued_at, started_at, finished_at} | null}`. `job` is `null` on the legacy Celery path. The browser uses this for every language: the exam page no longer opens an SSE stream.
+
+`ExamTakeView` polling:
+- Poll at once, then every 1 s for 5 polls, every 2 s for 2 polls, then every 3 s. After 2 minutes, every 10 s.
+- The submission id is kept per question in `sessionStorage`, so polling resumes after a refresh.
+- The tracker (Submit → Queue → Execute → Grade → Feedback) **never moves backwards**. A `/fail/` sends the job from `running` back to `pending`, but the student keeps seeing the furthest stage reached.
+- "Retrying…" shows when `job.attempt` says this is not the first claim. "Taking longer than usual…" shows after 10 s.
+- A `dead` job ends the run with "couldn't grade … doesn't count as an attempt". On `passed`/`failed`, the page fetches `GET /api/results/<id>/`.
+
+### 5.8 Failure handling
+
+| Failure | What happens |
+|---|---|
+| Commit fails | Neither the submission nor the job exists; the student sees an error and the attempt isn't used |
+| Relay down | Jobs wait as `pending` and publish on the first tick after restart. The UI shows "Waiting in line", then "Taking longer than usual…" |
+| Queue unreachable | Publish fails; the job stays `pending` with `publish failed: …` and is retried every tick |
+| Duplicate delivery | The second claim gets 409 `done` (acknowledged) or `busy` (retried). Only the lease holder can complete |
+| Grader error, or Lambda out of time before any student timeout | `/fail/` puts the job back to `pending` and the relay republishes it on the next tick. The message is acknowledged. The attempt counts |
+| Crash or Lambda timeout (no `/fail/`) | **SQS:** the message reappears after the 540 s visibility timeout (about 9 minutes) and the expired lease is reclaimed with a new token. A late `complete` with the old token gets 409. **Local:** redelivery after 2 s and 5 s, then the sweep requeues the expired lease |
+| Three attempts used | The next claim (410), or the sweep for an expired lease at the limit, marks the job `dead` and the submission `error`. That submission doesn't count against the student's attempts |
+| Wrong answer, runtime error, student timeout | A normal `succeeded` job with a failing grade. Never retried |
+
+**Dead-letter queue semantics.** `codemas-exec-dlq` holds messages whose delivery wasn't acknowledged 3 times. A delivery is left unacknowledged (reported in `batchItemFailures`, or the invocation died) when:
+- the invocation crashed or timed out;
+- Django was unreachable;
+- the claim got anything other than `done`, `gone` or `dead`. That includes `busy`, 401, 404 and 5xx;
+- the `/fail/` call itself failed;
+- `complete` answered with anything other than 200 or 409;
+- less than 30 s of Lambda time was left, so it skipped the claim.
+
+A job released through `/fail/` dies in Postgres with no message in the DLQ. A message can also reach the DLQ without its job dying, because deliveries that never claimed don't spend attempts. The SQS-mode sweep backstop republishes those jobs after 30 minutes.
+
+### 5.9 What stays on Celery
+
+- C++ and Java execution: the legacy `execution.tasks.execute_submission`. **Since 2026-10-06 students can't pick them:** the exam offers JavaScript (default) and Python only, and `SubmissionCreateSerializer` rejects any other language with 400, so this unsandboxed path is reachable only for Python/JS during a `PIPELINE_LANGUAGES=""` rollback. The task runs them with `run_local` **on the Celery worker host with no sandbox**: it strips the environment, applies a 10 s timeout, and drops to `nobody` when running as root, and nothing else. Its docstring marks it development only.
+- AI rubric feedback and hints, queued from `after_grading()`.
+- Plagiarism (Phase 1 and 2) and the Celery Beat schedules.
+
+`PIPELINE_LANGUAGES=""` sends every language back to Celery with no code change. In production: `railway variable set "PIPELINE_LANGUAGES=" -s backend --skip-deploys && railway up -s backend --detach`. Set it empty, never delete it: unset, it defaults to `python,javascript`.
+
+### Attempt Limiting — Row Lock + Unique Constraint
+
+The race to prevent: two simultaneous submits both count 2 attempts and both create a 3rd.
+
+- **The fix is in Postgres, not a cache.** The create transaction locks the student's `User` row before counting, so a second request for the same student waits until the first commits, then counts it.
+- **A database invariant backs it.** The unique constraint on (`student`, `question`, `attempt_number`) holds even if the lock were bypassed; the loser gets 409.
+- **Ungradable runs are refunded by the count itself.** Submissions in `error` (dead job, or no test cases) are excluded from the count, so no refund bookkeeping is needed. `attempt_number` keeps increasing (it is `max + 1`), so the constraint never collides with an excluded row.
 
 ### Rate Limiting (DRF Throttle)
 
@@ -568,11 +643,13 @@ class SubmissionThrottle(UserRateThrottle):
     scope = 'submissions'  # maps to 30/hour in DEFAULT_THROTTLE_RATES
 ```
 
-General API: 200/hour. Anonymous: 20/hour. Submissions specifically: 30/hour. This prevents burst abuse at the API level before even reaching the attempt logic.
+General API: 2000/hour. Anonymous: 20/hour. Submissions specifically: 30/hour. This prevents burst abuse at the API level before even reaching the attempt logic.
 
 ---
 
 ## 6. Execution Engine — Docker Sandbox
+
+> **Status (October 2026):** this section is the original execution design. Python and JavaScript now run through the job pipeline's executor (`lambda/exec`, process-level sandboxing, §5.6). Locally, the relay runs that handler code itself. In production, Python and JavaScript have run on Lambda (stack `codemas-pipeline`, ap-southeast-1) since 2026-10-05, with `PIPELINE_LANGUAGES=python,javascript`. C++ and Java still go through the legacy Celery task, which executes with `run_local`, a development-only subprocess executor with no sandbox. The Docker container settings below are not what runs today.
 
 ### Why Not the Alternatives
 
@@ -586,6 +663,8 @@ General API: 200/hour. Anonymous: 20/hour. Submissions specifically: 30/hour. Th
 #### AWS Lambda (seriously evaluated)
 - Lambda was evaluated seriously. The free tier covers 5.2 million invocations/month — which would make execution essentially free.
 - **Why Lambda was not chosen:** SSE needs a persistent connection that Lambda cannot hold (Lambda invocations are stateless and terminate). Celery Beat (the auto-close scheduler) needs an always-running process. Cold start time for Lambda is 8–15 seconds vs Docker's ~500ms warm start — over the 10-second SLA for results. A Lambda migration would require replacing Celery with SQS, Celery Beat with EventBridge, and SSE with API Gateway WebSockets — a complete rewrite for $0.29/month savings. Not worth it at this scale.
+
+- **Revisited (October 2026):** Python and JavaScript execution moved to a Lambda-shaped executor after all, without the rewrite listed above. The same handler code runs locally inside the relay, and on Lambda in production (live since 2026-10-05, `PIPELINE_LANGUAGES=python,javascript`). The browser polls a status endpoint instead of holding SSE, Celery Beat stays on Celery, and a transactional outbox plus relay feeds the queue. See §5.
 
 #### Docker — Chosen
 Works on Mac (local development), portable to any Linux host, uses kernel namespaces and cgroups for isolation, explicit deny-everything security posture.
@@ -643,19 +722,11 @@ For compiled languages (Java, C++), the pattern is: write source to `/tmp`, comp
 
 The student never sees the test case inputs that the container runs against — only `is_hidden=False` test cases are exposed in the UI. The runner (judge) is fully server-side.
 
-### Lambda Stub (Future Migration Path)
+Hidden test data never reaches a student from any endpoint: for non-staff viewers, exam detail/list/questions send a hidden test only as an `{id, is_hidden: true}` stub (so the test count stays right), `/api/results/<id>/` nulls its `test_case_input`/`test_case_expected`, and the AI hint prompt omits it.
 
-The `execution/tasks.py` file contains `run_in_lambda()` fully implemented but commented out. The switch is a one-line code change:
+### Lambda Executor (built; replaces the old stub)
 
-```python
-# Current (Docker):
-output, error, exec_time = run_in_docker(code, language, input_data)
-
-# Lambda (commented out):
-# output, error, exec_time = run_in_lambda(code, language, input_data)
-```
-
-This demonstrates the architecture is migration-ready without having paid the rewrite cost prematurely.
+`run_in_lambda()` and the commented-out switch in `execution/tasks.py` are gone. The executor is now `lambda/exec/` (`handler.py` and `sandbox.py`, standard library only). It is reached through the job pipeline (outbox → relay → SQS → Lambda), not by a synchronous invoke from a Celery task. The design is in §5.4 to §5.6.
 
 ### Container Cost Formula
 
@@ -674,6 +745,8 @@ where hours = (exec_ms + cold_start_ms) / 3_600_000
 ---
 
 ## 7. Real-Time Result Delivery — SSE
+
+> **Status (October 2026):** the exam page no longer opens an SSE stream. It polls `GET /api/submissions/<id>/status/` for every language (§5.7). `submissions/sse.py`, its `/stream/` route and the legacy Celery task's Redis publish have been removed (nothing published to the channel for pipeline submissions, so an open stream held a web thread forever). This section describes the earlier design.
 
 ### Why SSE and not WebSockets
 
@@ -842,8 +915,8 @@ EXAM CLOSES → run_exam_plagiarism_check starts
                     + policy.tab_weight*tab   + policy.submission_weight*surprise
 
          signals_fired = count(score > 0 for each signal)
-         confidence = LOW (3+ signals — most suspicious) | MEDIUM (2) | HIGH (1 — least suspicious)
-         # LOW integrity confidence = we are least confident they wrote it themselves
+         confidence = HIGH (3+ signals — most suspicious) | MEDIUM (2) | LOW (1 — least suspicious)
+         # flag confidence = confidence that the flag indicates misconduct
 
          if risk_score > policy.min_risk_score:  # default 0.20
              BehaviouralFlag.objects.update_or_create(...)
@@ -892,17 +965,19 @@ EXAM CLOSES (manual or auto-close via Celery Beat)
 run_question_plagiarism_check(question_id):
          │
          ▼
-    Query LOW integrity confidence suspects (Phase 1 data must exist first):
-    # 'low' = least confident they wrote it themselves = 3+ signals fired
+    Query HIGH flag confidence suspects (Phase 1 data must exist first):
+    # 'high' = 3+ signals fired = most likely misconduct
     high_risk_ids = BehaviouralFlag
-                    .filter(question=q, confidence='low')
+                    .filter(question=q, confidence='high')
                     .values_list('submission__student_id')
 
          │
          ▼
     Phase 2: Pull best submission for EVERY student
     (passed attempt if exists, else latest attempt)
-    → all_subs list (N items)
+    → all_subs list (N items, one per student: the DISTINCT student query
+      clears Submission's default -submitted_at ordering, otherwise a
+      multi-attempt student appears once per attempt and pairs with themselves)
 
          │
          ▼
@@ -929,12 +1004,8 @@ run_question_plagiarism_check(question_id):
       all_subs[j].student_id IN high_risk_ids
 
     if sim_matrix[i][j] >= policy.similarity_threshold:  # default 0.80, read from Redis cache
-        PlagiarismFlag.objects.get_or_create(
-            submission_1, submission_2,
-            similarity_score=sim,
-            detection_method='behavioural_filtered_tfidf'
-        )
-        notify_plagiarism_flagged(pf)
+        _save_pair_flag(question, sub_a, sub_b, sim)   # one flag per (question, lower student id, higher student id)
+        notify_plagiarism_flagged(pf)                  # only when the pair is new
     
     Submission.similarity_check_done = True
     for all subs in this question
@@ -947,6 +1018,8 @@ This is a subtle but critical design decision.
 If you compare only flagged suspects against each other, you miss the source student. A student who typed slowly and didn't paste has clean behavioural signals. If a flagged student copied from them, they appear nowhere in the behavioural flags. Suspects-vs-suspects would never find that pair.
 
 The correct approach: suspects are the **query set**, the full cohort is the **search space**.
+
+**Who is a suspect (changed 2026-10-06).** A flagged student whose weighted risk score is at least the policy's `compare_min_risk` (default 0.35), **or** who fired 3+ signals (high confidence). Before this, only 3+-signal students were compared, so the weights never decided who was compared: a student who pasted 100% of the code but did nothing else (1 signal, risk 0.40) was flagged yet never compared. Now raising a weight on the Policy page and rerunning brings new students into the comparison. A rerun under a stricter policy also removes behavioural flags that no longer reach `min_risk_score`, but only flags still `pending` with no dispute (a legacy per-flag one, or an appeal on that exam by that student); reviewed or disputed flags keep the trainer's decision. Policy changes apply forward: past runs keep their policy snapshot, and old exams change only when a trainer presses Rerun (which can add pairs and clear unreviewed flags).
 
 ```
 SUSPECTS vs SUSPECTS (wrong):
@@ -1047,7 +1120,7 @@ This pattern ensures the plagiarism job is always triggered regardless of how th
 DETECTION                TRAINER UI                    AUDIT LOG
      │                       │                              │
      ▼                       │                              │
-BehaviouralFlag created  ──► AnnotationQueueView           │
+BehaviouralFlag created  ──► Exam case file (Investigation)│
 (risk > policy.min_risk_score)│                             │
                              │  Trainer sees:               │
 PlagiarismFlag created  ───► │  - risk_score bar            │
@@ -1078,7 +1151,7 @@ PlagiarismFlag created  ───► │  - risk_score bar            │
 
 ### Why Versioning Matters
 
-The `PlagiarismPolicy` singleton stores nine configurable thresholds (weights, baselines, similarity threshold). When a trainer changes these values mid-cohort, the algorithm's scoring changes immediately for all future submissions. Without a changelog, a disputed flag from two weeks ago cannot be audited — the trainer cannot know what weights were in effect when the flag was generated.
+The `PlagiarismPolicy` singleton stores eleven configurable values (weights, baselines, minimum risk, compare-from risk, similarity threshold, max attempts). When a trainer changes these values mid-cohort, the algorithm's scoring changes immediately for all future submissions. Without a changelog, a disputed flag from two weeks ago cannot be audited — the trainer cannot know what weights were in effect when the flag was generated.
 
 ### Snapshot vs Diff Approach
 
@@ -1146,6 +1219,8 @@ The annotation queue shows individual flags in isolation. A trainer reviewing 40
 
 ```
 Level 1 — Cohort Health Feed  (/plagiarism/cohorts/)
+  Investigation page (first item under Integrity; the old Flags page URL
+  /dashboard/plagiarism redirects here). One list of exams; no tabs.
   All exams ranked by flag rate
   Flag rate = flagged_students / total_submissions
   Health: green (<10%), amber (10–25%), red (>25%)
@@ -1155,8 +1230,9 @@ Level 2 — Cohort Deep Dive  (/plagiarism/cohorts/<exam_id>/)
   Cheating rings (connected components)
   Student risk ranking
 
-Level 3 — Student Case  (/support/student/<id>/)
-  Existing StudentCaseView — linked from both rings and student table
+Level 3 — Student page  (/dashboard/students/<id>)
+  One student page (Overview, Integrity, Disputes tabs) — linked from both rings and
+  student table. The old student case URL /dashboard/support/student/<id> redirects here.
 ```
 
 ### Combined Risk Score
@@ -1263,7 +1339,7 @@ Full JSON copy of all 9 `PlagiarismPolicy` fields at the moment the run started.
 Fixed metrics that don't change between runs for the same exam:
 - `unique_students` — distinct student count (NOT total submission rows)
 - `pass_rate` — students who passed ≥1 question / unique_students
-- `avg_execution_ms` — average Docker execution time
+- `avg_execution_ms` — average submission execution time (`execution_time_ms`, summed across a submission's tests)
 - `avg_solve_time_s` — average time for passed submissions
 - `avg_attempts` — average attempts per student per question (not total submissions)
 - `avg_time_remaining` — average time left on clock at submission
@@ -1296,7 +1372,7 @@ POST /api/plagiarism/cohorts/<exam_id>/rerun/
 Triggers a fresh `run_exam_plagiarism_check` with `trigger='manual_rerun'`. This is how trainers apply a new policy to past exams. Behaviour on re-run:
 
 - **Phase 1 (behavioural):** `update_or_create` on `BehaviouralFlag` — existing flags are recalculated with new weights. Confidence levels and risk scores update.
-- **Phase 2 (similarity):** `get_or_create` on `PlagiarismFlag` — existing pairs update their `similarity_score`. New pairs are created. **Old pairs that no longer meet the threshold are NOT deleted.** Trainer review decisions (`review_status`, `review_note`) are always preserved.
+- **Phase 2 (similarity):** one flag per (question, student pair), students ordered by id. An existing pair is updated in place (its submissions move to each student's current best attempt, and its `similarity_score` is refreshed), so a pair confirmed during a live-exam check is not brought back as pending by the exam-close run. New pairs are created. **Old pairs that no longer meet the threshold are NOT deleted.** Trainer review decisions (`review_status`, `review_note`) are always preserved.
 - A new `PlagiarismRun` record is always created — giving a before/after comparison in Run History.
 
 ### Why Exam Context Doesn't Change Between Runs
@@ -1422,7 +1498,7 @@ This is a common question and the answer has an important subtlety:
 
 The TF-IDF score decides *whether* to flag a pair. The View Code panel decides *what to show* when a trainer clicks into a flagged pair. These are completely different algorithms.
 
-**How line-by-line comparison works (frontend, PlagiarismView.vue):**
+**How line-by-line comparison works (frontend, `utils/codeCompare.ts`, shown in the exam case file on Investigation):**
 
 ```typescript
 function findMatchedLines(lines1, lines2) {
@@ -1476,7 +1552,7 @@ function findMatchedLines(lines1, lines2) {
 Three GPT-backed features live in the `ai` Django app. The governing rule:
 **none of them touch the critical result-delivery path.** CodeMas's headline
 metric is sub-10s result delivery at 10k concurrent students; every AI feature
-fires *after* the result is delivered, as a separate Celery task, and appears in
+fires *after* the grade is committed, as a separate Celery task, and appears in
 the UI a few seconds later. Any failure (no API key, provider down, malformed
 output) is logged and swallowed — the student's pass/fail result is never affected.
 
@@ -1490,6 +1566,10 @@ output) is logged and swallowed — the student's pass/fail result is never affe
 - **Idempotent tasks** — each result is a `OneToOne` on its source row, and every
   task early-returns if a row already exists, so retries / page refreshes never
   regenerate or double-bill.
+- **Backfill for seeded history** — `manage.py backfill_ai_feedback` queues
+  `score_rubric` (and `generate_hint` for failed attempts) for every graded submission
+  missing one. Needed because the demo seed writes submissions directly, so the
+  per-submission `after_grading` hook never fired for them. Run after every seed.
 - **Read-only polled API** — frontend polls `GET` endpoints that return
   `{"status": "pending"}` until the row exists, then the data. Bounded polling
   (≈15 × 2s) gives up quietly if a feature is unavailable.
@@ -1501,11 +1581,14 @@ output) is logged and swallowed — the student's pass/fail result is never affe
 | Rubric scoring | Every submission, after delivery | `score_rubric` | `RubricScore` (1:1 Submission) | `GET /api/ai/rubric/<submission_id>/` (owner/trainer) |
 | Socratic hint | Failed submissions only | `generate_hint` | `AIHint` (1:1 Submission) | `GET /api/ai/hint/<submission_id>/` (owner/trainer) |
 | Plagiarism explanation | New flagged pair at exam close | `explain_plagiarism` | `PlagiarismExplanation` (1:1 PlagiarismFlag) | `GET /api/ai/plagiarism-explanation/<flag_id>/` (trainer) |
+| Exam summary | First view of an exam on My results | `generate_exam_summary` (inline, cached) | `ExamSummary` (unique student + exam) | `GET /api/ai/exam-summary/<exam_id>/` (owner/trainer) |
+| Weekly recommendation | Celery beat, Monday 07:00 IST | `weekly_recommendations_task` | `WeeklyRecommendation` (unique student + week_start) | `GET /api/ai/recommendation/me/` (owner; 204 until the first one) |
 
 - **Rubric** — one GPT call scores 4 dimensions (correctness, code quality,
   approach, edge cases) 0–2 each (total 0–8) with per-dimension justifications +
-  overall feedback. Enqueued from `execution.tasks.execute_submission` after the
-  terminal status is published. Shown as a collapsible "AI Feedback" panel under
+  overall feedback. Enqueued once grading commits. For Python and JavaScript that
+  is `jobs.execute.after_grading`, run on commit by the executor's `complete`
+  call. For C++ and Java it is the legacy `execution.tasks.execute_submission`. Shown as a collapsible "AI Feedback" panel under
   the result in `ExamTakeView`.
 - **Hint** — enqueued from the same place but gated on `status == 'failed'`. Uses
   the first failed test case (input/expected/actual/error) + code as context.
@@ -1519,12 +1602,58 @@ output) is logged and swallowed — the student's pass/fail result is never affe
   similarity pair in the trainer review UI — explicitly framed as *evidence, not a
   verdict*; the trainer still decides.
 
+### Weekly recommendation (added 2026-10-06)
+
+One call per student per week that reads **all of the student's exams together**,
+separate from the per-exam summary (which stays).
+
+- **Schedule** — `CELERY_BEAT_SCHEDULE['weekly-recommendations']`,
+  `crontab(minute=30, hour=1, day_of_week='mon')` (TIME_ZONE is UTC, so 07:00 IST).
+  Runs on the existing worker (`celery -A codemas worker -B`), where all AI work lives.
+- **Who** — every student (role `student`, not superuser) with at least one graded
+  attempt (`passed`/`failed`/`error`). About 98 calls a week at the current seed.
+- **Input** (`weekly_recommendation_input`) — per exam with a graded attempt: score /
+  available, the exam result (passed = solved at least half the questions; a question voided for
+  confirmed plagiarism is not counted, and the line says how many were not), rank of cohort, and the questions sorted
+  into `passed_first_try` / `passed_after_retries` / `not_passed` / `not_attempted`
+  (failed first time = retries + not passed; still unsolved = not passed + not
+  attempted), so the model never has to work out "first try" itself. Built
+  from `leaderboard/exam_stats.py:student_exam_stats`, the same helper behind
+  `/api/leaderboard/me/exams/`, so the prompt sees the numbers the page shows.
+- **Output** — a one-sentence headline and three cards (`keep` / `work` / `next`:
+  Keep doing, Work on, Next step), each `{text, evidence}` where evidence quotes the
+  real results. Prompt rules: every claim from the supplied numbers, name questions
+  and topics, no tool/vendor names, 1–2 sentences per card.
+- **Storage** — `ai.WeeklyRecommendation(student, week_start, headline, cards JSON,
+  input_digest, model_used, created_at)`, unique on (student, week_start). `week_start`
+  is the IST Monday. `input_digest` is a sha256 of the input; if the numbers have not
+  changed since the last row, the row is carried forward with no model call.
+- **Failure** — a failed or malformed call writes nothing, and the API keeps returning
+  the latest good row. One student's failure never stops the loop.
+- **Backfill** — `python manage.py generate_weekly_recommendations` writes this week's
+  row for every eligible student now (run once after deploy and after a re-seed so the
+  demo shows one before the first Monday). Re-running keeps existing rows.
+- **UI** — top of My results, under the KPI tiles and above the difficulty tiles,
+  inside the shared `AiGlow` component: "Updated Tue, 6 Oct · next Mon, 12 Oct".
+  Empty state: "Your first weekly recommendation arrives the Monday after your first
+  exam is graded."
+
+### AI glow (`frontend/src/components/AiGlow.vue`)
+
+Every AI-written block (weekly recommendation, exam summaries, rubric reviews, hints)
+renders inside `AiGlow`: a slow conic-gradient border (Masai red → violet → orange),
+a soft blurred halo and a sparkle icon with `aria-label="Generated by AI"`. It replaces
+the old "Written by a model from your results." caption. The animation stops under
+`prefers-reduced-motion`.
+
 ### Why off the critical path
 
 The enqueue calls are wrapped in `try/except` at the call site, so even failing to
-*enqueue* an AI task cannot break `execute_submission`. The tasks run on the same
-Celery workers as execution but on separate task invocations, so a slow GPT call
-backs up only the AI work, never the Docker execution or SSE publish.
+*enqueue* an AI task cannot break grading. On the job pipeline, `after_grading` also
+runs as a robust on-commit hook, after the result is already committed. Python and
+JavaScript execution doesn't touch Celery at all, so a slow GPT call can't delay
+their grading. C++ and Java execution shares the Celery workers, but as separate
+task invocations, so a slow GPT call backs up only the AI work.
 
 ---
 
@@ -1543,7 +1672,11 @@ backs up only the AI work, never the Docker execution or SSE publish.
 │        'auto-manage-exams': {                                      │
 │            'task': 'exams.tasks.auto_manage_exams',               │
 │            'schedule': 60.0,  # every 60 seconds                  │
-│        }                                                           │
+│        },                                                          │
+│        'weekly-recommendations': {                                 │
+│            'task': 'ai.tasks.weekly_recommendations_task',        │
+│            'schedule': crontab(mon 01:30 UTC = 07:00 IST),        │
+│        },                                                          │
 │    }                                                               │
 └────────────────────────────────────────────────────────────────────┘
 
@@ -1551,12 +1684,14 @@ backs up only the AI work, never the Docker execution or SSE publish.
                      │            Redis                     │
                      │                                     │
                      │  Queue: celery (default)            │
-                     │    - execute_submission tasks        │
+                     │    - execute_submission (C++/Java)   │
+                     │    - score_rubric, generate_hint     │
+│    - weekly_recommendations_task     │
                      │    - run_exam_plagiarism_check       │
                      │    - run_question_plagiarism_check   │
                      │                                     │
-                     │  Pub/Sub channels:                  │
-                     │    - submission:{id}                 │
+                     │  Pub/Sub: submission:{id} (legacy   │
+                     │    task still publishes; unused)    │
                      └────────────────┬────────────────────┘
                                       │
                      ┌────────────────▼────────────────────┐
@@ -1570,13 +1705,20 @@ backs up only the AI work, never the Docker execution or SSE publish.
                      └─────────────────────────────────────┘
 ```
 
-### Why Celery Cannot Be Replaced by Lambda Here
+### What Moved Off Celery, and What Stayed
 
-1. **Persistent Redis pub/sub subscription**: The SSE endpoint holds an open `pubsub.listen()` loop. Lambda terminates after each invocation — it cannot hold this connection open. When the Celery worker publishes to `submission:{id}`, there must be a persistent listener on the other side.
+The original argument against Lambda was that it would mean a full rewrite: SSE needed a persistent pub/sub listener, and Beat needed an always-on process. The decision actually taken avoids that rewrite by moving only the piece that benefits.
 
-2. **Celery Beat scheduler**: Runs `auto_manage_exams` every 60 seconds. This is an always-running process. AWS EventBridge could replace it, but that adds a dependency on AWS infrastructure and requires a different invocation model.
+1. **Submission execution for Python and JavaScript moved to the job pipeline** (§5): a transactional outbox, a relay, and an executor written as a Lambda handler.
+   - Locally the relay runs the handler in-process (`JOB_TRANSPORT=local`).
+   - In production, since 2026-10-05, the same code runs as the `codemas-exec` Lambda behind SQS.
+   - The SSE dependency went away because the browser now polls `/status/`, so nothing needs a long-lived subscription.
 
-3. **Cost analysis**: Full Lambda migration (Celery → SQS, Celery Beat → EventBridge, SSE → API Gateway WebSockets) would save approximately $0.29/month at 5,000 submissions/month. The rewrite cost is not justified.
+2. **Celery Beat stays.** `auto_manage_exams` still runs every 60 seconds on Celery Beat. EventBridge could replace it later, but nothing forces that.
+
+3. **AI and plagiarism work stays on Celery.** That covers the rubric, hints, plagiarism explanations and the exam-close plagiarism batch. They are long-running, best-effort, and not on the student's critical path.
+
+4. **C++ and Java execution stays on Celery for now.** It needs a heavier executor image. It is chosen per language by `PIPELINE_LANGUAGES`, and today it runs through `run_local` with no sandbox (see §17).
 
 ### Task Staggering on Exam Close
 
@@ -1591,6 +1733,8 @@ for i, question in enumerate(exam.questions.all()):
 ```
 
 This distributes CPU load across time rather than hitting all questions simultaneously.
+
+`seed_data` uses this same entry point for demo data: Phase 2 runs through the real exam-close path on every closed exam (`run_exam_plagiarism_check(exam_id, trigger='exam_close', notify=False)`, Celery in eager mode, `notify` passed through to every per-question task); planted copying cases are caught from Phase 1 suspects.
 
 ---
 
@@ -1645,7 +1789,7 @@ The most information-dense view in the system. Shows:
 │ [3] input=[3,3], target=6       | expected=[0,1] | got=[0,1] ✓  │
 ├─────────────────────────────────────────────────────────────────┤
 │ BEHAVIOURAL FLAGS:                                               │
-│ risk_score: 0.73 ████████████░░ LOW integrity confidence        │
+│ risk_score: 0.73 ████████████░░ HIGH flag confidence            │
 │ Signals: "Pasted 68% of code (142 chars)"                       │
 │          "Solved medium in 1m 12s (baseline 4m)"               │
 │ [Confirm Plagiarism]  [Dismiss]                                  │
@@ -1656,9 +1800,112 @@ The most information-dense view in the system. Shows:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Annotation Queue
+### Flag review
 
-Separate view that lists all pending behavioural and similarity flags. Trainers can filter by status (pending/confirmed/dismissed) and review in bulk. Every review action is written to `ReviewAuditLog` for a full audit trail.
+Flags are reviewed on each exam's case file (Investigation → exam), one at a time or in bulk. The separate Annotation queue page was removed 2026-10-08: it sent the same `review_status` and `review_note` to the same review endpoint, so nothing it recorded is lost; `/dashboard/plagiarism/queue` redirects to Investigation. Every review action is written to `ReviewAuditLog` for a full audit trail.
+
+**A confirmed case costs the student their points (2026-10-08).** On the next page load
+(no caching), the student's points for the question are withheld when they have a confirmed
+behavioural flag on it, or a confirmed similarity pair plus a behavioural flag (not dismissed)
+of their own on it; a classmate who only matched keeps their points. One rule in
+`analytics/metrics.py` (`voided_pairs`, used by `points_by_student` and `solve_times`), so the
+score and rank drop identically on the exam report, the student page, My results, Home and the
+leaderboard. The exam report marks the student "Points withheld · plagiarism confirmed · −N";
+a student with a pending flag is marked "Under review" with the rank unchanged. The student
+sees the outcome in the Trainer review box on My results (see "Appeals" below); the
+leaderboard shows no markers. **A voided question is not solved either** (owner decision
+2026-10-08): `metrics.exam_results` leaves it out of `solved` and reports `voided`, so the pass
+rule can fail the exam when that drops the student below half (3 of 4 with one voided still
+passes), and every success rate, the trend dot, students who need help and the question success
+rate (`question_success_by`) follow. Pages say why: My results ("Tests passed on attempt N · Not
+counted: plagiarism", the Result card's "Plagiarism confirmed by your trainer"), the exam report
+("Not passed · plagiarism", or "Passed" with "N not counted"), the student page trend tooltip,
+and the AI summary / weekly recommendation result line. Dismissing or overturning restores it;
+the matched side of a pair keeps the solve. See `docs/metrics.md`. The log is kept (`GET /api/plagiarism/audit/`, latest 200) but no trainer page shows it since 2026-10-08 (owner removed the Audit trail tab to keep Investigation to one story).
+
+**Past exams arrive reviewed (2026-10-08).** `manage.py settle_past_reviews` decides every pending
+flag on an ENDED exam as the trainer would have: a high-confidence behaviour flag of a student in a
+code-match pair is confirmed (note: points withheld), a pair is confirmed when either side's behaviour
+flag was (a neutral note true for both students), everything else is dismissed without a note. It
+uses the review endpoints' own steps (reviewed_by, `ReviewAuditLog`, summary refresh) and dates the
+audit entries a day after the exam ended. The seed runs it, so Investigation starts with no backlog
+while every past case stays visible as decided history. Dry run unless `--yes`; re-running is a no-op.
+
+**Reaching a case from a student (2026-10-08).** Cases are built in one place,
+`plagiarism.views.exam_cases(exam_id)` (with `case_keys`), used by the investigation detail, the
+student page (`integrity_cases`: one entry per exam the student has flags on, with status,
+withheld points, code matches, the decided note and the `case_key`) and the exam report rows
+(`case_key`). The report's "Under review" badge and the student page's Integrity tab link straight
+to that case; the case file takes `from=student:<id>` / `from=report:<id>` / `from=dispute:<id>`
+to show a back button (highlighting the student when opened from their page) and return there
+after a decision.
+
+**Notes to students.** Confirm/Dismiss case sends one group note, or separate notes per student.
+A student's note is stored on their own behavioural flags; a similarity pair carries a note only
+when both of its students get the same one, otherwise an empty note, so no student sees a
+classmate's note. Matched-only students (no behavioural flag of their own on the exam) get no
+note unless the trainer ticks them, mirroring the points rule. My results (`GET
+/api/plagiarism/mine/`) shows each note text once per exam.
+
+### Appeals (disputes) — one round per exam (2026-10-08)
+
+Model `support.DisputeRequest`, one row per (student, exam) (`UniqueConstraint` on student + exam
+for rows without a `flag_id`). Fields: `exam` (FK), `student_note` (≤ 1,000 characters, required),
+`decision_note` (the trainer's notes on the student's confirmed flags when the appeal was filed:
+an overturn rewrites the flags' notes, so the original is kept here), `status` open / upheld /
+overturned, `resolution_note`, `resolved_by`, `resolved_at`. `flag_type` / `flag_id` are set only
+on legacy rows filed per flag before this change.
+
+| Endpoint | Who | What |
+|---|---|---|
+| `POST /api/support/disputes/` `{exam_id, student_note}` | student | Files the appeal. 404 when the student didn't take the exam; 400 without a confirmed decision there (their own behavioural flag, or a similarity pair on either side), with an empty or over-long response, or when the exam already has an appeal. |
+| `GET /api/support/disputes/mine/` | student | Their appeals, newest first; `is_new` = ruled after `integrity_seen_at`. |
+| `GET /api/support/disputes/?status=open\|upheld\|overturned\|all` | trainer | The queue (default open): student, exam, filed date, status, response, decision note, `case_key` for the case-file link. |
+| `GET/PATCH /api/support/disputes/<id>/` `{decision: uphold\|overturn, resolution_note}` | trainer | Rules on an OPEN appeal; the reply is required; a ruling is final (a second PATCH is 400, and no second appeal can be filed on that exam). |
+| `GET /api/support/attention/`, `POST /api/support/attention/seen/` | both / student | Badge counts (see `docs/metrics.md`); seen sets `User.integrity_seen_at`. |
+
+**Rulings.** *Uphold* changes no flag. *Overturn* sets every non-dismissed behavioural flag of the
+appellant on that exam to dismissed, with the ruling as the review note, `reviewed_by` the trainer
+and a `ReviewAuditLog` entry, like any review. Similarity pairs are not touched, so a classmate in
+the same case keeps their outcome; by `metrics.voided_pairs` the appellant's points return on the
+exam report, My results, Home and the leaderboard. Overturning a legacy row with no exam is refused
+(it can only be upheld). Rules live in `support/integrity.py`.
+
+**Student side.** My results shows one Trainer review block per exam with a decision: a headline
+(`Points withheld: plagiarism confirmed (−N)` / `Plagiarism confirmed: no points withheld` /
+`Reviewed — no action taken` / `Decision overturned: points restored`, from
+`integrity_outcomes` → `integrity` on `/api/leaderboard/me/exams/`), the trainer's note once, then
+the appeal area ("Respond to this decision" → response + Submit, or the status: waiting / upheld /
+overturned with the trainer's reply); per-attempt lines sit in a collapsed Details disclosure. A
+Disputes page (`/disputes`, students only) lists their appeals with the decision, their response,
+the ruling and a link to the exam's review box (`/results?exam=<id>`).
+
+**Trainer side.** Disputes (`/dashboard/support/disputes`) filters Open / Upheld / Overturned / All;
+each row links the case file (`from=dispute:<id>`). The appeal page shows the original decision note,
+the response, the case link and Uphold / Overturn, each with a required reply; Overturn says "Their
+behaviour flags on this exam become dismissed; their points are restored. Classmates are not
+affected." The case file (`appeals` on the investigation detail) and the student page's Integrity
+tab (`appeal` on each `integrity_cases` entry) show "Appeal pending" with the response and a link.
+
+**Attention signals.** Sidebar badges: student My results = new decisions, Disputes = new rulings;
+trainer Investigation = cases to decide, Disputes = open appeals. The student's Home shows the newest
+new item as a banner; the trainer's Overview says "N appeals and M cases waiting for you". Counts are
+fetched once per page visited (no polling). Opening My results or Disputes marks everything seen.
+
+**AI exam summary.** The input ends with the student's integrity outcome on the exam (points withheld
+after a plagiarism review / decision overturned / confirmed with no points withheld / reviewed with no
+action, plus an appeal under review or upheld), and withheld questions are marked in the per-question
+lines; a `Result:` line gives the counted outcome (a voided question is not solved, and the line
+says how many were not counted); the prompt says to state a withholding neutrally, never praise a
+withheld score, and never call a not-counted question solved. The stored
+summary is deleted whenever that outcome changes (either flag review endpoint, filing an appeal,
+uphold, overturn), so it is rewritten on the next view.
+
+**Migration** (`support/0002_appeals_per_exam`): `resolved` → `upheld`, `escalated` → `open` (it was
+never decided), `exam` backfilled from the flag's submission where the flag still exists (left null
+otherwise, shown by the flag's exam or "Exam no longer available"), `decision_note` from that flag's
+note; it prints the counts. `accounts/0004_user_integrity_seen_at` sets existing accounts' seen time
+to the migration time so old decisions don't all show as new.
 
 ### Integrity Monitoring — Model Accuracy Dashboard
 
@@ -1673,7 +1920,7 @@ A meta-layer that answers: "how well is the plagiarism detection system itself p
 - **Behavioural Precision** — `confirmed / (confirmed + dismissed)` for reviewed behavioural flags. NOT `confirmed / total_fired`. The denominator is only flags a trainer actually acted on. With 205 pending and 3 reviewed, precision is based on 3 data points — statistically meaningless until more flags are reviewed.
 - **Similarity Precision** — same formula for similarity pairs
 - **Behavioural Coverage** — `submissions with behavioural_check_done=True / total submissions`. Tells you whether the pipeline ran, not how many were flagged.
-- **Similarity Coverage** — same for `similarity_check_done`. Will never reach 100% by design — Phase 2 only processes HIGH confidence suspects.
+- **Similarity Coverage** — same for `similarity_check_done`. Will never reach 100% by design — Phase 2 only processes suspects (risk ≥ `compare_min_risk` or 3+ signals).
 
 **Signal Effectiveness table:**
 Per signal (paste, time, tab_switch, submission_surprise), shows:
@@ -1685,7 +1932,7 @@ Per signal (paste, time, tab_switch, submission_surprise), shows:
 Why this matters: Paste fired on 127 flags but only 3 were reviewed (2 confirmed + 1 dismissed) → 66.7% precision. The other 124 are still pending. Precision numbers are only meaningful after sufficient trainer review volume.
 
 **Confidence Breakdown:**
-Shows confirmation rate split by `confidence` level. If LOW confidence (3+ signals) has lower precision than HIGH confidence (1 signal), the confidence model is miscalibrated.
+Shows confirmation rate split by flag `confidence` level (confidence that the flag indicates misconduct). If HIGH confidence (3+ signals) has lower precision than LOW confidence (1 signal), the confidence model is miscalibrated. The UI label is "Flag confidence" everywhere, coloured high = red, medium = amber, low = neutral (`frontend/src/utils/metrics.ts`).
 
 **Similarity by Score Range:**
 Breaks down pairs into 0.9–1.0, 0.8–0.9, 0.5–0.8 buckets with confirmed counts. Shows where in the similarity range actual cheating concentrates — informs threshold tuning.
@@ -1697,6 +1944,34 @@ For each exam, shows what % of submissions have `behavioural_check_done=True` an
 Compares behavioural flag count in the last 7 days vs the prior 7 days. A sudden spike (e.g., "flags doubled: 0 → 138") can indicate a new cheating vector or a policy change that caught a previously-missed pattern.
 
 ---
+
+
+### Metrics — One Source of Truth
+
+Every rate a page shows comes from `backend/analytics/metrics.py`, never from a
+view's own arithmetic. Before this, the same exam showed 60.5% "accepted" on
+exam history (passed ÷ all attempts) and 76% on exam ops (students whose latest
+attempt passed ÷ students), and the flag rate was 65.3% on one page and 11.2%
+on another (different denominators).
+
+- **Success rate** (since 2026-10-07) = how many students passed the exam. A student passes
+  an exam by solving at least half of its questions (all of them count, attempted or not;
+  pending ignored, refunded errors never solve; a question voided for confirmed plagiarism is
+  not solved, since 2026-10-08). Exam = students who passed ÷ took; student =
+  exams passed ÷ exams taken; section = per exam, its students who passed ÷ took; question =
+  students who solved it ÷ attempted it. API field still `accepted_rate`. The separate
+  "Solved" rate (pairs solved ÷ pairs attempted) and the old passed ÷ graded submissions
+  definition are gone.
+- **Flagged students** = students with a behavioural flag ÷ students who took the exam (the only integrity rate)
+- **Took the exam** = students who submitted ÷ enrolled
+- **Flags to review** = pending behavioural flags; **Risk** = risk_score × 100
+
+Population is always `role='student'` and not superuser. `exam_summaries()`
+returns all exam-level fields in four grouped queries; exam history, exam ops,
+investigations and the overview spread the same dict, and
+`analytics/tests_consistency.py` asserts every endpoint returns identical values
+for the same exam. Health thresholds for flagged students: watch at 30%, at risk
+at 50%. Full table: `docs/metrics.md`.
 
 ## 12. Cost Analysis Engine
 
@@ -1766,15 +2041,17 @@ if request.user.role != 'trainer':
 
 Roles: `student`, `trainer`, `admin`.
 
-### SSE Authentication Special Case
+### SSE Authentication Special Case (legacy)
 
-EventSource (browser SSE API) does not support custom headers. Token is passed as a URL query parameter:
+The exam page no longer uses SSE. It polls `GET /api/submissions/{id}/status/` with the normal `Authorization: Bearer` header, so result delivery needs no token in the URL. The old stream endpoint has been removed; it authenticated this way:
 
 ```
 GET /api/submissions/{id}/stream/?token={access_token}
 ```
 
-The SSE view reads both `HTTP_AUTHORIZATION` header and `?token=` query param, validating both identically via `AccessToken(token_str)`.
+EventSource (browser SSE API) does not support custom headers, so the SSE view reads both the `HTTP_AUTHORIZATION` header and the `?token=` query param, validating both identically via `AccessToken(token_str)`.
+
+The executor's internal endpoints (`/internal/jobs/…`) accept neither: they are authenticated only by a per-job token in the body, `HMAC-SHA256(JOB_SIGNING_SECRET, "job:" + job_id)`, which only the relay can mint; complete and fail also need the lease token (§5.5).
 
 ### Rate Limiting
 
@@ -1782,12 +2059,12 @@ The SSE view reads both `HTTP_AUTHORIZATION` header and `?token=` query param, v
 # settings.py
 'DEFAULT_THROTTLE_RATES': {
     'anon':        '20/hour',   # login attempts, unauthenticated
-    'user':        '200/hour',  # general authenticated use
+    'user':        '2000/hour', # general authenticated use (dashboards make many reads per view)
     'submissions': '30/hour',   # submission endpoint specifically
 }
 ```
 
-Submission throttle is tighter because each submission spins a Docker container — 200/hour from one user would be a CPU denial-of-service.
+Submission throttle is tighter because each submission runs untrusted code against every test case. Unthrottled, one user's submissions would be a compute denial-of-service on the executor.
 
 ---
 
@@ -1795,34 +2072,38 @@ Submission throttle is tighter because each submission spins a Docker container 
 
 ### How 10,000 Concurrent Students Was Approached
 
-**Job queue architecture is the key.** Without a queue, 2000 simultaneous submissions would hit 2000 Docker `client.containers.run()` calls from Django synchronously — exhausting threads and Docker daemon connections immediately.
+**Job queue architecture is the key.** Without a queue, 2000 simultaneous submissions would each run student code inside a Django request, exhausting the web workers immediately.
 
-With Celery + Redis:
-1. Django receives submission, writes to DB, enqueues task: ~5ms
-2. Returns 201 to student immediately
-3. Worker pool processes containers at controlled concurrency
+With the job pipeline (§5), for Python and JavaScript:
+1. Django receives the submission and writes it, plus its outbox job, in one transaction. The request never calls the queue.
+2. It returns 201 to the student immediately.
+3. The relay publishes pending jobs in batches, and the executor drains them at a controlled concurrency.
+
+C++ and Java take the same shape through Celery + Redis.
 
 ```
 10,000 students submit simultaneously
            │
            ▼
 Django (Gunicorn, N workers)
-  - validate auth: ~1ms
-  - check Redis counter: ~1ms
-  - write Submission to PG: ~5ms
-  - enqueue task: ~2ms
-  - return 201: ~10ms total
+  - validate auth
+  - lock the student's User row, count attempts (row lock + unique constraint, not a Redis counter)
+  - INSERT Submission + INSERT jobs_job (pending), one transaction
+  - return 201
            │
            ▼
-Redis queue absorbs the spike
-  - 10,000 tasks queued, 0 dropped
+Postgres outbox absorbs the spike
+  - 10,000 pending jobs, 0 dropped: they exist as soon as the request commits
            │
            ▼
-Celery workers drain queue
-  - each worker: 1 task at a time
-  - each task: 1-5 Docker containers
-  - queue drains at worker_count × (1/avg_task_time) rate
-  - result delivered via SSE as each task completes
+Relay publishes (SKIP LOCKED, up to 50 per tick, every 0.5 s)
+  - local: a thread pool in the relay runs the handler
+  - production (live 2026-10-05): SQS codemas-exec buffers, Lambda scales per message
+           │
+           ▼
+Executor drains
+  - one job = claim → run each test in a sandboxed child → complete
+  - results reach the browser on its next status poll (1 s → 3 s)
 ```
 
 ### Dashboard Polling Cache
@@ -1839,7 +2120,7 @@ if cached:
 cache.set(cache_key, data, timeout=10)
 ```
 
-Jitter: the SSE "waiting" initial message resets a client-side interval timer. Different students submit at different times, naturally spreading their polling intervals.
+Jitter: students submit at different times, so their submission status polls (1 s backing off to 3 s, then 10 s after 2 minutes) start at different moments and spread out naturally.
 
 ### The 2000 Concurrent User Number
 
@@ -1847,7 +2128,7 @@ This is a real usage number from running CodeMas with actual students at Masai S
 
 **What would be added from day one now:**
 - k6 load tests simulating 2000 VUs all submitting simultaneously
-- Measure p95 latency on submission endpoint AND SSE result delivery
+- Measure p95 latency on the submission endpoint AND on submit-to-result (status poll shows a grade)
 - Deadline spike scenario: all users submit in a 30-second window
 - Set pass/fail thresholds in CI pipeline
 - The 30-second spike is the hardest pattern and the primary justification for the job queue
@@ -1855,7 +2136,7 @@ This is a real usage number from running CodeMas with actual students at Masai S
 ### Concurrency Tests Written
 
 - Jest unit tests: score parser, attempt limiter, result storage
-- Integration tests: full submit-to-result flow including actual Docker execution
+- Integration tests: full submit-to-result flow through the local transport, running the real executor handler and sandbox (`jobs/tests/test_e2e.py`)
 - Real exam sessions: monitored EC2 CPU, memory, container count, scaled gradually
 
 ---
@@ -1932,59 +2213,15 @@ Cost ($)
 | Factor | Lambda | Docker/EC2 |
 |---|---|---|
 | Cold start | 100ms | 500ms warm, 8-15s cold (Fargate) |
-| Persistent connections | Cannot hold | Yes (SSE, pub/sub) |
+| Persistent connections | Cannot hold (no longer needed: results are polled) | Yes |
 | Always-running process | Cannot (terminates per invoke) | Yes (Celery Beat) |
 | Free tier | 5.2M invocations/month | No |
-| Rewrite required | Yes (Celery→SQS, SSE→WS) | No |
+| Rewrite required | Only for execution (outbox + relay + SQS); Beat, AI and plagiarism stay on Celery | No |
 | Cost at 5k/month | $39.01 | $39.30 (Fargate), $54 (EC2) |
 | Savings vs EC2 | $14.99/month | $14.70/month (Fargate) |
 | Verdict at this scale | Not worth rewrite | Fargate is right choice |
 
----
-
-## 16. Entrupy Parallels
-
-These are the specific connections between CodeMas design decisions and Entrupy's engineering problems.
-
-### Direct Architecture Parallels
-
-| CodeMas Component | Entrupy Equivalent | Why It's the Same Problem |
-|---|---|---|
-| Docker execution pipeline | Image processing / ML inference pipeline | Both: async job, resource-limited container, result returned via queue |
-| Celery job queue (Redis broker) | Async authentication request processing | Both: spike absorption, ordered processing, retry semantics |
-| TF-IDF + cosine similarity search | Image similarity search (CNN embeddings + vector DB) | Same mathematical foundation: vector space, cosine distance |
-| Trainer cohort dashboard | Internal monitoring dashboards | Real-time aggregation, time-series, role-based data views |
-| Exam builder + test cases | Data annotation tools + knowledge encoding | Structured ground truth creation, version control, validation |
-| Hidden test cases | Protected ground truth data | Information asymmetry by design — students/users never see judge data |
-| Attempt limiting (Redis atomic counter) | Policy enforcement systems | Rate limiting, usage gates, abuse prevention |
-| SSE result delivery | Real-time status updates in internal tools | Event-driven UI updates without polling overhead |
-| Role-based auth (student/trainer/admin) | Account management systems | RBAC with explicit guards per endpoint |
-| Code similarity search (TF-IDF + cache) | Image search across 25M microscopic images | Query normalization, corpus indexing, approximate nearest neighbour |
-| Annotation queue (plagiarism review) | Authentication specialist annotation workflow | Human-in-the-loop review, audit trails, confirmation/dismissal workflow |
-| normalized_code pre-computed at submit time | Embeddings pre-computed at image upload time | Decouple computation from query — don't pay cost at search time |
-| Redis TF-IDF matrix cache (MD5 key) | Vector index pre-built, queried at search time | Amortize build cost, invalidate on corpus change |
-
-### The Core Shared Problem: Scale + Accuracy
-
-**CodeMas:** 10,000 concurrent students need results in <10s. Plagiarism detection must be fast enough to not delay exam close. TF-IDF gives 50ms search at 2k submissions.
-
-**Entrupy:** 25 million microscopic images. Authenticating a new item means searching across 25M vectors. Pre-computed embeddings + vector index = sub-second at any scale.
-
-**The decision pattern is identical:** Don't compute on query. Compute at write time. Cache/index the result. Query against the cached representation.
-
-### The Human-in-the-Loop Pattern
-
-**CodeMas:** Plagiarism algorithm raises flags. Trainer confirms or dismisses. Every decision logged to `ReviewAuditLog` with `reviewed_by`, `action`, `note`, `created_at`. Algorithm never takes unilateral action — it surfaces evidence.
-
-**Entrupy:** Authentication algorithm produces a confidence score. Human specialist reviews edge cases. Decision is logged. This is the same annotation workflow.
-
-The design principle: **algorithms filter, humans decide.** The algorithm reduces 10,000 comparisons to 50 flags for human review. The human provides the final judgment and the audit trail.
-
-### Behavioural Signals Parallel
-
-**CodeMas behavioural signals:** paste events, time-to-complete, tab switches, attempt discontinuity. Captured by the client, sent with the submission, stored immutably.
-
-**Entrupy authentication signals:** image quality, metadata, provenance data, item history. Captured at submission, used as features. Neither system trusts the submitter's account of their own behaviour — data is captured passively.
+**Revisited (October 2026):** the full rewrite was never needed. Polling removed the persistent-connection requirement, and only execution moved: Python and JavaScript run on the job pipeline, whose executor runs as a Lambda in production since 2026-10-05 (`PIPELINE_LANGUAGES=python,javascript`). Beat, AI and plagiarism stay on Celery (§10). The costs above are the original estimates and haven't been re-measured.
 
 ---
 
@@ -2018,11 +2255,20 @@ Being clear about limitations demonstrates better engineering judgment than over
 
 ### Infrastructure Gaps
 
-1. **No horizontal scaling configuration**: Gunicorn runs with default workers. A production deployment would configure `workers = 2 * CPU_count + 1` and use async workers (gevent/eventlet) for SSE connections.
+1. **No horizontal scaling configuration**: Gunicorn runs a fixed `gthread` pool (`--workers 2 --threads 8`, see `backend/Dockerfile`) on one Railway instance; there is no autoscaling rule. Result delivery is now short status polls, so no long-lived connections need async workers.
 
-2. **Docker images not pre-pulled**: Cold start is dominated by image pull (~200MB for Python Alpine). Pre-baking images into the EC2 AMI or using a local registry would cut cold start from 10s to ~200ms.
+2. **Executor cold start not measured**: the Lambda is live (2026-10-05), and the first submission after an idle period pays a cold start. It hasn't been measured yet; a warm-up submission or provisioned concurrency are the options.
 
-3. **No circuit breaker on Docker execution**: If the Docker daemon goes down, all Celery tasks fail. A circuit breaker pattern with fallback to "execution unavailable" would prevent queue backup.
+3. **No circuit breaker on the executor**: if Django is unreachable from the executor, every delivery fails, and on SQS each message heads for the DLQ after 3 receives. The jobs themselves are safe in Postgres, and the sweep backstop republishes them, but nothing pauses the relay or tells students "execution unavailable".
+
+4. **C++ and Java are not sandboxed**: both are selectable in the exam UI. They run through the legacy Celery task's `run_local` on the Celery worker host, with no sandbox. All it does is strip the environment, apply a 10 s timeout, and drop to `nobody` when running as root. There are no rlimits and no isolation from the host. It is marked development only. Moving them onto the executor needs a heavier image with a compiler and a JDK.
+
+5. **Python/JavaScript isolation is process-level**: one Lambda; the handler runs student code in a constrained child process (rlimits, empty environment) inside the function's Firecracker microVM. There is no kernel boundary between grader and child. Guardrails: no secrets or answers in the Lambda, per-job tokens. Two known limits are **accepted**, found by the 2026-10-04 production smoke test and still present at the 2026-10-05 go-live:
+   - **R1, egress.** Real Lambda refuses the seccomp socket filter, so student code can reach the internet. Bounded by CPU time per test, concurrency 5, 3 attempts and the submission throttle.
+   - **R2, role credentials.** Student code can read the role's AWS credentials, and the role can `ReceiveMessage`, `DeleteMessage` and `ChangeMessageVisibility` on `codemas-exec`. A determined student with a working solution could take a classmate's queued message, claim that job first, read the classmate's code and test inputs, and post outputs that forge a pass or a fail. They can also delay other students' grading by deleting or hiding messages. Exposure is highest under an exam-deadline backlog (concurrency 5).
+   - Still holds: the signing secret and the expected answers never enter the Lambda, and a student can't pass their own submission without correct output.
+
+   The real fix is future work: the two-function split used by online judges, where the grader invokes a runner with a zero-permission role, in a VPC with no NAT or internet gateway and a security group with no outbound rules, and reads its return value.
 
 ---
 
@@ -2061,7 +2307,9 @@ Located in `plagiarism/tests.py`. No database. Each signal function is a pure fu
 | `TimeSignalTest` | 8 | All time ratio thresholds across easy/medium/hard difficulty baselines |
 | `TabSwitchSignalTest` | 7 | All switch count thresholds including `None` edge case |
 | `SubmissionSurpriseSignalTest` | 6 | All similarity bands; passed vs. failed status interaction |
-| `ComputeBehaviouralRiskTest` | 6 | Confidence levels (low/medium/high), weighted score math, result shape |
+| `ComputeBehaviouralRiskTest` | 7 | Flag confidence from signal count (1 → low, 2 → medium, 3+ → high), weighted score math, result shape |
+| `Phase2SuspectSelectionTest` | 7 | Phase 2 compares the 3-signal (high confidence) student, not a 1-signal one below `compare_min_risk` (fast only, risk 0.30); a multi-attempt student is vectorised once (no self-pairs); `notify=False` (used by seed_data) skips the trainer email and AI explanation, also when passed to the exam-close entry point, which still records a completed `PlagiarismRun` (default stays `notify=True`) |
+| `PolicyDecidesWhoIsComparedTest` | 3 | A 100% paste alone (risk 0.40) is compared and its pair flagged; raising the tab weight and rerunning brings a tab-switch-only student into the comparison; a stricter rerun clears a pending flag but keeps confirmed and disputed ones |
 | `NormalizePythonTest` | 7 | Variable renaming, builtin preservation, comment/docstring stripping, identical-logic equality |
 | `NormalizeJavascriptTest` | 5 | Same coverage for JS: keyword preservation, comment stripping, renaming |
 
@@ -2132,226 +2380,7 @@ def test_precision_uses_reviewed_denominator_not_total_fired(self):
 | Area | Why excluded |
 |---|---|
 | `run_exam_plagiarism_check` task end-to-end | Runs Celery + spawns Phase 2 sub-tasks; requires a live Redis broker. Manual testing sufficient for a portfolio project. |
-| Docker execution | External process. Integration-tested manually; mocked in unit tests. |
-| SSE stream | Long-lived connection, hard to test with Django test client. Not worth the scaffolding overhead. |
+| Executor on real Lambda | No automated test; live since 2026-10-05, verified only by the go-live smoke test (`deploy/aws/smoke.sh`: Python and JS graded through the pipeline, no `JOB_SIGNING_SECRET` readable, R1 and R2 present as accepted). The handler and sandbox have their own suite (`lambda/exec/tests`, 79 tests, run on macOS and in a Linux Docker image). The pipeline is tested end to end through the local transport (`jobs/tests/test_e2e.py`). |
+| C++/Java legacy execution (`run_local`) | External process on the Celery worker. Integration-tested manually; mocked in unit tests. |
+| SSE stream (legacy) | Removed. `submissions/tests.py` checks the `/stream/` route now 404s. |
 | Frontend Vue components | Vitest scaffolded (`App.spec.ts` exists); View Code algorithm is the highest-value candidate for unit tests given it's pure JS. |
-
----
-
-### What to Say to Drew About Testing
-
-> "I have 86 tests in two layers. The unit tests cover the plagiarism signal math — paste ratio, time-to-complete, tab switching, surprise detection — because those are pure functions with clear numerical contracts that would be invisible to black-box tests. The integration tests cover the API layer end-to-end against a real SQLite test database: auth guards, policy cache invalidation, audit log creation, the precision formula. Two of those tests are regression tests for bugs I actually fixed — one for an inflated student count that was counting all submission rows instead of unique students, one for a wrong precision denominator that would have shown misleadingly high signal accuracy. The suite runs in about 30 seconds."
-
----
-
-## 19. Live Dashboard Walkthrough — Interview Guide
-
-Every answer below is framed with ownership: I designed this, I made this trade-off, here is why. Use these as the narration script while Drew watches the live dashboard.
-
----
-
-### Opening anchor — say this before you open a single screen
-
-> "I want to show you two sides of the system. The student side shows the real-time execution pipeline — the async job queue, Docker sandbox, and SSE result delivery. The trainer side is the engine room: plagiarism detection, an operational monitoring feedback loop, and a policy management interface with a full audit trail. I'll narrate the decisions as we go so you can see not just what it does but why I built it this way."
-
----
-
-### Screen 1 — Student Submits Code
-
-**What Drew sees:** Code editor → Submit → "Running…" spinner → result appears without a page reload.
-
-**What to say:**
-
-> "The key constraint here is that code execution is non-deterministic in time — anywhere from 200ms to 8 seconds depending on the problem and language. You can't block an HTTP request for 8 seconds. So I designed a decoupled pipeline. Django validates the submission and enqueues it in Redis in under 10ms, returns a 201. The browser opens an SSE stream immediately — a long-lived HTTP response with `text/event-stream` content type. Celery picks the job off the queue with BRPOP, runs it in an isolated Docker container with a 5-second timeout and a 50MB memory cap, publishes the result to a Redis pub/sub channel keyed by submission ID, and the SSE view pushes it to the browser. The student never feels the execution time in the HTTP round-trip."
-
-**If Drew asks about the schema:**
-
-> "`attempt_number` is stored as an explicit column, not derived from counting rows. If two concurrent requests arrive for the same student's 3rd attempt, counting rows races. The explicit column lets me enforce the attempt limit atomically before the insert."
-
-> "`status` has five explicit states: pending → running → passed / failed / error. I needed to distinguish 'queued but not started' from 'running' from 'execution threw an exception' — each maps to a different UI state and a different troubleshooting path for the trainer."
-
----
-
-### Screen 2 — Trainer Dashboard (Live Exam View)
-
-**What to say:**
-
-> "The trainer dashboard polls every 10 seconds during a live exam. At 10,000 concurrent students with 100 trainers polling, that's 10 queries per second against a GROUP BY across the submissions table — non-trivial. I added a Redis cache with a 10-second TTL. The first trainer to poll in each window pays the database cost; the next 99 get the cached response. The TTL matches the poll interval so trainers never see data more than one poll cycle stale. This pattern was deliberate — the trainer experience requires freshness, not real-time, so there was no reason to push updates."
-
----
-
-### Screen 3 — Plagiarism: Cohort List
-
-**What Drew sees:** Sorted list of exams with flag rates, green/amber/red health indicators, and ring counts.
-
-**What to say:**
-
-> "I designed this screen to solve what I call the flat flag queue problem. If I showed trainers a raw list of 200 similarity flags sorted by score, they'd have no idea where to start. This view answers a different question: which exam should I investigate first? I sort by flag rate, not flag count, because a 20% flag rate on a 50-student exam is a fundamentally different situation from a 2% flag rate on a 1,000-student exam."
-
-> "The ring count comes from a connected-component BFS on the similarity graph. If A matched B and B matched C, all three are one ring — even if A and C never matched directly. I surface the count here because a ring of 5 students linked by 4 similarity flags is qualitatively different from 4 isolated pairs. It suggests organised collaboration, not coincidence."
-
-> "I also fixed a real bug here. The student count was returning total submission rows — a student with 3 attempts was counted as 3 students. I changed it to `.values('student_id').distinct().count()`. I have a regression test that specifically asserts: 3 submission rows from 2 unique students returns 2."
-
----
-
-### Screen 4 — Cohort Detail: Risk Table and Rings
-
-**What to say:**
-
-> "Once a trainer picks an exam, this view gives two tools. The student risk table ranks everyone by combined risk score. I weight behavioural 60% and similarity 40% — behavioural is direct per-submission evidence: did this student paste 80% of their code in one event, did they solve a hard problem in 45 seconds? Similarity could have an innocent explanation — two students might arrive at the same algorithm independently. The interaction of both signals is what's diagnostic."
-
-> "The rings section shows the connected clusters from the BFS with members, average similarity, and confirmed count. If a trainer confirmed 3 flags in a 5-person ring, that context surfaces immediately rather than requiring them to manually trace the graph from the flat review queue."
-
-**If Drew asks about the BFS:**
-
-> "I build an adjacency dictionary from all similarity flags for the exam — for each pair (A, B), I add A→B and B→A. Then standard DFS/BFS: pick any unvisited node as the start, explore its connected component, any component with 2 or more nodes is a ring. This runs in O(V + E) where V is flagged students and E is similarity pairs. For a typical exam with 10 suspects, it's microseconds."
-
----
-
-### Screen 5 — Integrity Monitoring
-
-**What to say:**
-
-> "I built this screen after realising I had a classic ML monitoring problem: signals were firing but I had no feedback loop to know if they were accurate. The Signal Effectiveness table shows fired, reviewed, confirmed, and precision per signal. The precision formula is confirmed divided by confirmed-plus-dismissed — NOT confirmed divided by total fired. That distinction is critical: pending flags tell you nothing about accuracy, only reviewed flags do. I had to be explicit about this because the naive implementation uses total as the denominator and produces a misleadingly low precision number."
-
-> "Coverage is separate from flags. It tracks whether the pipeline ran at all — driven by `behavioural_check_done` and `similarity_check_done` boolean fields on the Submission model. A submission can show a flag from seed data while coverage is 0% if the Celery task never ran on it. Coverage gaps tell you where the pipeline is broken, not where cheating happened."
-
-> "Drift detection compares the last 7 days against the previous 7 days. If behavioural flags double week-over-week with no policy change, that's a new cheating pattern emerging in the cohort. Worth flagging separately from precision — precision tells you the quality of what fired, drift tells you the volume changed."
-
----
-
-### Screen 6 — Policy: Settings, Changelog, Run History
-
-**What to say:**
-
-> "I made the signal weights configurable because I genuinely do not know the optimal values. You tune them with real trainer review data. Every change creates a PolicyVersion record: full JSON snapshot before and after, who changed it, why, and which exams were running at the time. A trainer can look at any flag from any date and reconstruct the exact thresholds that produced it."
-
-> "The Run History tab is how you measure the impact of a policy change. You raise paste_weight from 0.40 to 0.50, re-run on three historical exams, and compare the two PlagiarismRun records. Did more suspects get flagged? Did confirmed rate improve? That's the feedback loop I was missing before I built this."
-
-> "Manual re-run is non-destructive by design. Phase 1 overwrites risk scores but preserves trainer review decisions — if a trainer confirmed a flag, I don't delete that. Phase 2 updates pair similarity scores and creates new pairs that now exceed the threshold, but never deletes existing pairs. Historical review work is never lost."
-
----
-
-### Schema ownership — say these if Drew probes schemas
-
-**`BehaviouralFlag` is OneToOne with Submission, not with Student:**
-> "I store one flag per submission because Phase 2 (TF-IDF cross-comparison) queries by submission ID. The confidence filter — which submission pairs to compare — needs to join on submission, not on student. If I stored flags per student I'd need an extra join to find the latest submission, and I'd lose the per-attempt granularity."
-
-**`PlagiarismFlag.unique_together = ('submission_1', 'submission_2')`:**
-> "Without this, every re-run would append duplicate pair records. The unique constraint forces get_or_create semantics: re-run updates the similarity score on the existing pair. Combined with the review fields being preserved on update, this means a trainer's 'confirmed' decision survives a policy re-run."
-
-**`PlagiarismRun` as a separate model, not a flag count:**
-> "I needed to compare detection results across policy changes. If I only stored current flags, I'd lose what a different policy produced. PlagiarismRun captures the policy snapshot, exam context, and Phase 1/2 detection counts at a point in time. It's an immutable audit record — two runs on the same exam with different policies are two rows I can show side by side."
-
-**Redis as both broker and pub/sub:**
-> "Redis supports LPUSH/BRPOP for the Celery job queue and pub/sub for SSE delivery in the same process. When a worker finishes, it publishes to a channel keyed by submission ID. The SSE view subscribed to that channel gets the event. No additional broker infrastructure — one Redis handles both roles."
-
----
-
-### If Drew asks "Were you the sole architect?"
-
-> "Yes. I designed the full schema, the async pipeline, the SSE delivery, and the plagiarism detection system including the two-phase architecture and the BFS ring detection. I made every tech stack decision — SSE vs WebSockets, Docker vs Lambda, TF-IDF vs CodeBERT, when to cache and for how long. There were no other engineers. Everything I'm describing is something I thought through, built, and watched break and fixed."
-
----
-
-### Connecting it to Entrupy's "engine room"
-
-> "The role description says engine room — the backend systems that operations teams depend on. What I built here maps directly. The submission pipeline is invisible when it works and catastrophic when it doesn't, exactly like an authentication pipeline. The plagiarism system is a human-in-the-loop annotation workflow — trainers review algorithmic flags, and their decisions are the feedback data that improves the system. The monitoring view is how I know whether the engine is healthy. Those three patterns — reliable async pipeline, human-in-the-loop annotation tool, operational monitoring — are exactly what the engine room role needs."
-
----
-
-## 20. What to Say to Drew — Quick Reference
-
-These are conversation anchors for specific topics Drew might raise.
-
----
-
-### "Walk me through your architecture."
-
-Start with the problem: 10,000 concurrent students, results in under 10 seconds. The core constraint is that code execution is expensive and unpredictable — you can't do it synchronously in an HTTP request. The job queue is the answer. Student submits → Django validates and enqueues in ~10ms → returns 201 → student opens SSE stream → Celery worker runs Docker → publishes to Redis → SSE pushes result. The student waits 3-8 seconds depending on execution time, never the Django request latency.
-
----
-
-### "Why SSE and not WebSockets?"
-
-WebSockets are for bidirectional communication. Result delivery is server-to-client only. SSE is simpler: it's a long HTTP response with `text/event-stream` content type. No handshake, no library, browser reconnects automatically using Last-Event-ID. The only gotcha is that EventSource doesn't support custom headers, so we pass the JWT as a query parameter.
-
----
-
-### "Why did you choose Docker over Lambda?"
-
-Three reasons. One: SSE needs a persistent connection — Lambda terminates after each invocation and cannot hold a pub/sub subscription open. Two: Celery Beat needs an always-running process. Three: the cost savings from switching to Lambda at this scale are $0.29/month, which doesn't justify the complete rewrite (Celery → SQS, Celery Beat → EventBridge, SSE → API Gateway WebSockets). Lambda stub exists in the codebase — one-line change to switch — but the infrastructure overhead isn't worth it yet.
-
----
-
-### "Explain your plagiarism system."
-
-It's two layers, both running post-exam when the exam closes. Layer 1 (behavioural) runs first, synchronously in the exam-close Celery task: four signals (paste ratio, time-to-complete vs difficulty baseline, tab switches, attempt discontinuity) scored and stored as BehaviouralFlags. Running post-exam gives full context — all submissions are final, no false positives from partial data mid-exam, and trainers have no actionable surface during the exam anyway. Layer 2 runs after: TF-IDF cross-comparison restricted to LOW integrity confidence suspects (3+ behavioural signals fired) vs the full cohort. Running Phase 1 synchronously before queuing Phase 2 is a deliberate ordering guarantee — Phase 2 filters by LOW-confidence BehaviouralFlags (most suspicious), so those records must exist first. At 10k students with 5% flag rate: 5M comparisons instead of 50M naive.
-
----
-
-### "How does the similarity search work?"
-
-Trainer pastes code → we normalize it (strip variable names, strip comments) → fetch up to 2000 submissions from the database → check Redis for a cached TF-IDF matrix → if miss, build matrix and cache for 5 minutes with an MD5 cache key → transform the query into the same vector space → cosine similarity → return top 15. Two optimizations: normalized_code is pre-stored at submission time so we skip normalization at search time; the TF-IDF matrix is cached with a key that invalidates when new submissions arrive. At 2000 submissions, this runs in ~50ms. I'd switch to CodeBERT embeddings and pgvector at 100k+ because TF-IDF IDF scores shift as the corpus grows — stored vectors from Day 1 would be stale.
-
----
-
-### "How would you scale this to 10 million users?"
-
-The current bottleneck at scale is the Celery worker pool and Docker daemon. Migration path: (1) Replace Docker with AWS Lambda for execution — cold start acceptable at that scale with provisioned concurrency. (2) Replace Redis Celery broker with SQS for durability and auto-scaling. (3) Replace SSE with API Gateway WebSockets — SSE over HTTP/1.1 has a 6-connection-per-domain browser limit. (4) Replace the TF-IDF similarity search with CodeBERT embeddings stored at submission time and pgvector/FAISS for nearest-neighbour search. (5) Add read replicas for PostgreSQL — the dashboard queries are read-heavy. (6) Horizontally scale Django behind a load balancer. The plagiarism system needs a distributed TF-IDF or a switch to pre-computed embeddings — the current in-memory approach doesn't distribute.
-
----
-
-### "What would you do differently?"
-
-k6 load tests from day one. The 2000 concurrent user validation was real traffic but not instrumented — I didn't have p95 latency SLAs or automated regression detection. I'd also fix the N+1 in the dashboard view immediately (it loops over all students), add circuit breakers on the Docker executor, and rename the `snapshot_score` field to `tab_score` before it becomes embedded in client code. On the plagiarism side: the JavaScript normalizer uses regex instead of AST — it's inaccurate for complex syntax. A proper JS AST normalizer is the right fix.
-
----
-
-### "How do you handle audit trails for algorithm changes?"
-
-The plagiarism policy is configurable — trainers can adjust signal weights and thresholds via sliders. Every change creates a `PolicyVersion` record with a full JSON snapshot of the state before and after. When a trainer disputes a flag from two weeks ago, I can query the changelog, find which policy version was active at that time, and show exactly what threshold was used. It's the same idea as Entrupy versioning confidence thresholds for different product categories — old authentications should be re-evaluatable under the policy that was live at the time, not the current one.
-
-The affected-exam detection is a temporal overlap query: `Exam.filter(start_time__lt=period_end, end_time__gt=period_start)`. This tells the trainer which exams ran under each policy version — useful for understanding whether a threshold change improved precision.
-
----
-
-### "How do you investigate cohort-level patterns, not just individual flags?"
-
-The annotation queue shows individual flags in isolation, which is fine for reviewing one flag but useless for asking "why does this exam have a 30% flag rate?" The cohort investigation view aggregates by exam, ranks exams by flag rate with health indicators (green/amber/red), and lets the trainer drill into a specific cohort.
-
-The most valuable piece is cheating ring detection. I build an adjacency graph from similarity flags — if A matched B and B matched C, all three are in one ring even if A and C never directly matched. I run connected-component BFS and surface these clusters rather than making the trainer discover the network manually from the flat flag queue. A ring of 5 students linked by 4 similarity flags is a completely different investigation than 4 isolated pairs.
-
----
-
-### "How does this relate to what Entrupy does?"
-
-Entrupy's core loop: receive item → run ML inference → return authentication result. CodeMas's core loop: receive code → run execution → return pass/fail. Same architectural pattern — async job queue absorbs the spike, inference runs in an isolated container, result delivered via event stream. The plagiarism system maps directly to image similarity: I'm doing TF-IDF + cosine on code tokens; Entrupy does CNN embeddings + cosine on image feature vectors. The threshold, the pre-computation optimization, the human-in-the-loop annotation workflow — structurally identical problems. The scale difference (2k submissions vs 25M images) is why I'd need pgvector/FAISS at Entrupy's scale, and I've thought through that migration path.
-
----
-
----
-
-### "How does TF-IDF actually work?"
-
-TF-IDF — Term Frequency × Inverse Document Frequency. Three steps: (1) Normalize the code: strip comments, rename all variables to VAR_0, VAR_1... so `let timer` and `var t` look identical. (2) Build a vocabulary from all submissions in the exam — every unique token gets an index. Score each token per document: how often it appears in THIS submission × how rare it is across ALL submissions. Common tokens like `function` get near-zero weight. Rare tokens like `clearTimeout` get high weight. (3) Each submission becomes a row vector of these weighted scores. Cosine similarity measures the angle between two vectors — small angle = similar documents. The vocabulary and IDF scores are corpus-dependent, which is why you can't pre-store TF-IDF vectors — they'd be stale the moment a new submission arrives.
-
----
-
-### "What's the difference between TF-IDF in plagiarism detection vs the Code Similarity Search?"
-
-Same algorithm, different context. Plagiarism detection: builds a TF-IDF matrix from all submissions for one question in one exam, then compares HIGH-confidence suspects against that full cohort. Code Similarity Search: trainer pastes arbitrary code and searches across all 2000+ submissions across all exams. The search result caches the TF-IDF matrix in Redis (5-min TTL, MD5 cache key) so the second search hits the cache instead of rebuilding. The plagiarism batch doesn't cache — it builds fresh per question per exam.
-
----
-
-### "How do you know whether your signals are actually working?"
-
-The Integrity Monitoring view tracks signal precision — of the flags a trainer reviewed where this signal fired, what % were confirmed as real cheating? Key insight: the denominator is reviewed flags, not fired flags. With 205 pending and 3 reviewed, every precision number is statistically meaningless. You need enough trainer review volume before precision numbers are interpretable. I also track drift: if behavioural flags double week-over-week with no policy change, that's a new cheating pattern emerging, not a signal improvement.
-
----
-
-### "Walk me through the Re-run feature."
-
-When a trainer changes policy weights, past exams don't automatically re-score. They use the Policy tab → Re-run section to queue a fresh `run_exam_plagiarism_check` with `trigger='manual_rerun'`. Phase 1 recalculates all behavioural scores with new weights (update_or_create — overwrites scores, preserves trainer review decisions). Phase 2 re-runs TF-IDF with the new similarity threshold (get_or_create — updates existing pair scores, creates new pairs if they now exceed threshold, does NOT delete old pairs). A new `PlagiarismRun` record is created each time, so the trainer can compare the before/after in Run History — same exam, different policy, side-by-side detection results.
-
-*This document covers the complete system design of CodeMas as of May 2026. Every decision described here has corresponding code in the repository. Latest additions: Policy Impact Tracking — Run History (§8.3), TF-IDF internals and View Code line-by-line comparison (§9), Integrity Monitoring detail (§11).*

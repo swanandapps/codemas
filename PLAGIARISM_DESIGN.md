@@ -339,6 +339,14 @@ Compare to Option B (all-pairs per submission):
 
 **Signal reliability:** The batch plagiarism check is triggered by a Django `pre_save` signal on the Exam model, not by a view or API call. This means it fires regardless of how the exam is closed — Django admin, REST API, management command, or future dashboard.
 
+**What closes an exam:** the scheduler at `end_time`, the trainer's Close/End exam button, or the last enrolled student pressing Submit exam (nobody is left to submit, so there is no reason to wait for the clock). A manual or early close also moves `end_time` to now, so the scheduler can't re-open the exam.
+
+**Running it on demand:** the trainer's **Run plagiarism check** button on the exam report (`POST /api/plagiarism/cohorts/{id}/rerun/`, trigger `manual_rerun`) runs both phases on any exam, live or closed, and polls the run until it completes. Exam-close runs stagger Phase 2 by 30s per question so many exams closing together don't spike the worker; a trainer-started run is one exam someone is waiting on, so its questions are queued at once. Reviews are preserved across runs.
+
+**What the student sees:** a reviewed flag reaches the student on their results page (`GET /api/plagiarism/mine/`): every confirmed flag, and a dismissed one when the trainer wrote a note. They see the question, attempt, verdict and the trainer's note — never pending flags, scores, signals, or who the other student was. The trainer's note box says so.
+
+**Signal capture:** pasted characters are counted per question (a paste in one question never counts against another), and paste counts, tab switches and the student's start time survive a page refresh. Time-to-complete is measured from when the student opened the exam, not from the exam's end time.
+
 ---
 
 ## 10. Future Improvements (Prioritised)

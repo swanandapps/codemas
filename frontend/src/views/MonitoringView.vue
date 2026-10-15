@@ -2,7 +2,7 @@
     <div class="page">
         <div class="page-header">
             <div>
-                <h1 class="page-title">Integrity Monitoring</h1>
+                <h1>Integrity monitoring</h1>
                 <p class="page-subtitle">Model accuracy, signal effectiveness, and coverage gaps</p>
             </div>
         </div>
@@ -14,35 +14,35 @@
             <!-- KPI strip -->
             <div class="kpi-strip">
                 <div class="kpi-card">
-                    <div class="kpi-label">Pending Review</div>
+                    <div class="kpi-label" :title="METRIC_HELP.toReview">Flags to review</div>
                     <div class="kpi-value warn">
-                        {{ data.summary.behavioural.pending + data.summary.similarity.pending }}
+                        {{ data.summary.behavioural.flags_to_review }}
                     </div>
-                    <div class="kpi-sub">flags awaiting trainer</div>
+                    <div class="kpi-sub">{{ plural(data.summary.similarity.pending, 'similarity pair') }} also pending</div>
                 </div>
                 <div class="kpi-card">
-                    <div class="kpi-label">Behavioural Precision</div>
+                    <div class="kpi-label">Behavioural precision</div>
                     <div class="kpi-value" :class="precisionClass(data.summary.behavioural.precision)">
                         {{ fmtPct(data.summary.behavioural.precision) }}
                     </div>
                     <div class="kpi-sub">of reviewed flags confirmed</div>
                 </div>
                 <div class="kpi-card">
-                    <div class="kpi-label">Similarity Precision</div>
+                    <div class="kpi-label">Similarity precision</div>
                     <div class="kpi-value" :class="precisionClass(data.summary.similarity.precision)">
                         {{ fmtPct(data.summary.similarity.precision) }}
                     </div>
                     <div class="kpi-sub">of reviewed flags confirmed</div>
                 </div>
                 <div class="kpi-card">
-                    <div class="kpi-label">Behavioural Coverage</div>
+                    <div class="kpi-label">Behavioural coverage</div>
                     <div class="kpi-value" :class="coverageClass(data.coverage.behavioural_pct)">
                         {{ data.coverage.behavioural_pct }}%
                     </div>
                     <div class="kpi-sub">{{ data.coverage.behavioural_done }} / {{ data.coverage.total_submissions }} submissions</div>
                 </div>
                 <div class="kpi-card">
-                    <div class="kpi-label">Similarity Coverage</div>
+                    <div class="kpi-label">Similarity coverage</div>
                     <div class="kpi-value" :class="coverageClass(data.coverage.similarity_pct)">
                         {{ data.coverage.similarity_pct }}%
                     </div>
@@ -59,8 +59,9 @@
             <div class="two-col">
                 <!-- Signal effectiveness -->
                 <div class="card">
-                    <h2 class="card-title">Signal Effectiveness</h2>
-                    <p class="card-sub">Which signals actually predict confirmed cheating</p>
+                    <h2 class="card-title">Signal effectiveness</h2>
+                    <p class="card-sub">Which signals best predict cases trainers confirmed</p>
+                <div class="table-scroll">
                     <table class="data-table">
                         <thead>
                             <tr>
@@ -92,19 +93,21 @@
                         </tbody>
                     </table>
                 </div>
+                </div>
 
-                <!-- Confidence breakdown -->
+                <!-- Flag confidence breakdown (high = 3+ signals = most suspicious) -->
                 <div class="card">
-                    <h2 class="card-title">Confidence Breakdown</h2>
-                    <p class="card-sub">Model confidence vs actual confirmed rate</p>
+                    <h2 class="card-title">{{ METRIC_LABEL.confidence }} breakdown</h2>
+                    <p class="card-sub">{{ METRIC_HELP.confidence }} Precision is how many reviewed flags were confirmed.</p>
+                <div class="table-scroll">
                     <table class="data-table">
                         <thead>
-                            <tr><th>Confidence</th><th>Total</th><th>Confirmed</th><th>Precision</th></tr>
+                            <tr><th :title="METRIC_HELP.confidence">{{ METRIC_LABEL.confidence }}</th><th>Total</th><th>Confirmed</th><th>Precision</th></tr>
                         </thead>
                         <tbody>
-                            <tr v-for="(row, level) in data.confidence_breakdown" :key="level">
+                            <tr v-for="{ level, row } in confidenceRows" :key="level">
                                 <td>
-                                    <span class="badge" :class="levelClass(level)">{{ level }}</span>
+                                    <span class="badge" :class="confidenceClass(level)">{{ humanize(level) }}</span>
                                 </td>
                                 <td>{{ row.total }}</td>
                                 <td>{{ row.confirmed }}</td>
@@ -116,9 +119,11 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
 
-                    <h2 class="card-title" style="margin-top:24px">Similarity by Score Range</h2>
+                    <h2 class="card-title" style="margin-top:24px">Similarity by score range</h2>
                     <p class="card-sub">Where the threshold is set matters</p>
+                <div class="table-scroll">
                     <table class="data-table">
                         <thead>
                             <tr><th>Range</th><th>Total</th><th>Confirmed</th><th>Precision</th></tr>
@@ -137,14 +142,15 @@
                         </tbody>
                     </table>
                 </div>
+                </div>
             </div>
 
             <!-- Drift -->
             <div class="card">
-                <h2 class="card-title">Activity Drift — Last 7 Days vs Previous 7 Days</h2>
+                <h2 class="card-title">Activity drift — last 7 days vs previous 7 days</h2>
                 <div class="drift-grid">
                     <div class="drift-item">
-                        <div class="drift-label">Behavioural Flags</div>
+                        <div class="drift-label">Behavioural flags</div>
                         <div class="drift-nums">
                             <span class="drift-big">{{ data.drift.behavioural_last7d }}</span>
                             <span class="drift-arrow" :class="trendClass(data.drift.behavioural_last7d, data.drift.behavioural_prev7d)">
@@ -154,7 +160,7 @@
                         </div>
                     </div>
                     <div class="drift-item">
-                        <div class="drift-label">Similarity Flags</div>
+                        <div class="drift-label">Similarity flags</div>
                         <div class="drift-nums">
                             <span class="drift-big">{{ data.drift.similarity_last7d }}</span>
                             <span class="drift-arrow" :class="trendClass(data.drift.similarity_last7d, data.drift.similarity_prev7d)">
@@ -164,7 +170,7 @@
                         </div>
                     </div>
                     <div class="drift-item">
-                        <div class="drift-label">Avg Risk Score (last 7d)</div>
+                        <div class="drift-label">Avg risk score (last 7d)</div>
                         <div class="drift-nums">
                             <span class="drift-big">{{ data.drift.avg_risk_last7d ?? '—' }}</span>
                             <span class="drift-arrow" :class="trendClass(data.drift.avg_risk_last7d, data.drift.avg_risk_prev7d)">
@@ -178,8 +184,9 @@
 
             <!-- Exam coverage -->
             <div class="card">
-                <h2 class="card-title">Coverage Gaps by Exam</h2>
+                <h2 class="card-title">Coverage gaps by exam</h2>
                 <p class="card-sub">Exams below 100% may have unchecked submissions</p>
+                <div class="table-scroll">
                 <table class="data-table">
                     <thead>
                         <tr>
@@ -218,6 +225,7 @@
                         </tr>
                     </tbody>
                 </table>
+                </div>
             </div>
         </template>
     </div>
@@ -226,6 +234,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import api from '../api'
+import { humanize, plural } from '../utils/format'
+import { METRIC_HELP, METRIC_LABEL, CONFIDENCE_LEVELS, confidenceClass } from '../utils/metrics'
 
 const loading = ref(true)
 const error   = ref('')
@@ -241,6 +251,13 @@ onMounted(async () => {
         loading.value = false
     }
 })
+
+// most suspicious first, whatever order the API returns the keys in
+const confidenceRows = computed(() =>
+    CONFIDENCE_LEVELS
+        .filter(level => data.value?.confidence_breakdown?.[level])
+        .map(level => ({ level, row: data.value.confidence_breakdown[level] }))
+)
 
 function fmtPct(v: number | null): string {
     if (v === null || v === undefined) return '—'
@@ -260,10 +277,6 @@ function coverageClass(v: number): string {
     return 'badge-red'
 }
 
-function levelClass(level: string): string {
-    return level === 'high' ? 'badge-red' : level === 'medium' ? 'badge-yellow' : 'badge-dim'
-}
-
 function barWidth(v: number | null): string {
     if (v === null || v === undefined) return '0%'
     return (v * 100) + '%'
@@ -279,27 +292,32 @@ function trendClass(curr: number | null, prev: number | null): string {
     return curr > prev ? 'trend-up' : curr < prev ? 'trend-down' : ''
 }
 
+function driftMessage(label: string, prev: number, curr: number, followUp: string): string {
+    if (prev === 0) {
+        return `${label} went from 0 to ${curr} this week. ${followUp}`
+    }
+    return `${label} more than doubled this week, from ${prev} to ${curr}. ${followUp}`
+}
+
 const driftAlert = computed(() => {
     if (!data.value) return null
     const d = data.value.drift
     if (d.behavioural_last7d > d.behavioural_prev7d * 2 && d.behavioural_last7d > 5) {
-        return `Behavioural flags doubled this week (${d.behavioural_prev7d} → ${d.behavioural_last7d}). New cheating vector possible.`
+        return driftMessage('Behavioural flags', d.behavioural_prev7d, d.behavioural_last7d, 'Review recent flags for a new pattern.')
     }
     if (d.similarity_last7d > d.similarity_prev7d * 2 && d.similarity_last7d > 3) {
-        return `Similarity flags doubled this week (${d.similarity_prev7d} → ${d.similarity_last7d}). Coordinated sharing suspected.`
+        return driftMessage('Similarity flags', d.similarity_prev7d, d.similarity_last7d, 'Check whether code is being shared between students.')
     }
     return null
 })
 </script>
 
 <style scoped>
-.page { padding: 32px 40px; max-width: 1200px; }
 .page-header { margin-bottom: 28px; }
-.page-title  { font-size: 22px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
-.page-subtitle { font-size: 13px; color: var(--text-dim); margin: 0; }
+.page-subtitle { font-size: 15px; color: var(--text-muted); margin: 4px 0 0; }
 
 .loading   { color: var(--text-dim); padding: 40px 0; font-size: 14px; }
-.error-msg { color: var(--red); padding: 20px 0; font-size: 14px; }
+.error-msg { color: var(--red-ink); padding: 20px 0; font-size: 14px; }
 
 /* KPI strip */
 .kpi-strip {
@@ -308,18 +326,26 @@ const driftAlert = computed(() => {
     gap: 12px;
     margin-bottom: 24px;
 }
+@media (max-width: 899px) {
+    .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+    .two-col { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+    .kpi-strip { grid-template-columns: 1fr; }
+    .drift-grid { grid-template-columns: 1fr; }
+}
 .kpi-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 18px 20px;
 }
-.kpi-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 6px; }
-.kpi-value { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1; margin-bottom: 4px; }
-.kpi-value.warn       { color: #f59e0b; }
-.kpi-value.badge-green { color: #22c55e; }
-.kpi-value.badge-yellow { color: #f59e0b; }
-.kpi-value.badge-red   { color: var(--red); }
+.kpi-label { font-size: 11px; font-weight: 600; color: var(--text-dim); margin-bottom: 6px; }
+.kpi-value { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1; margin-bottom: 4px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.kpi-value.warn       { color: var(--amber-ink); }
+.kpi-value.badge-green { color: var(--green-ink); }
+.kpi-value.badge-yellow { color: var(--amber-ink); }
+.kpi-value.badge-red   { color: var(--red-ink); }
 .kpi-sub { font-size: 11px; color: var(--text-dim); }
 
 /* Drift alert */
@@ -327,12 +353,12 @@ const driftAlert = computed(() => {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: rgba(245, 158, 11, 0.08);
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    background: var(--yellow-dim);
+    border: 1px solid var(--yellow);
     border-radius: var(--radius-sm);
     padding: 10px 16px;
     font-size: 13px;
-    color: #f59e0b;
+    color: var(--amber-ink);
     margin-bottom: 24px;
 }
 
@@ -356,13 +382,12 @@ const driftAlert = computed(() => {
 .card-sub   { font-size: 12px; color: var(--text-dim); margin: 0 0 16px; }
 
 /* Table */
-.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table-scroll { overflow-x: auto; }
+.data-table { width: 100%; min-width: 480px; border-collapse: collapse; font-size: 13px; }
 .data-table th {
     text-align: left;
     font-size: 11px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     color: var(--text-dim);
     padding: 0 8px 8px;
     border-bottom: 1px solid var(--border);
@@ -372,11 +397,12 @@ const driftAlert = computed(() => {
     border-bottom: 1px solid var(--border);
     color: var(--text);
     vertical-align: middle;
+    font-variant-numeric: tabular-nums;
 }
 .data-table tr:last-child td { border-bottom: none; }
 .signal-name { font-weight: 600; text-transform: capitalize; }
 .reviewed-cell { color: var(--text-muted); }
-.mono { font-family: monospace; font-size: 12px; }
+.mono { font-family: var(--font-mono); font-size: 12px; }
 
 /* Badges */
 .badge {
@@ -386,10 +412,10 @@ const driftAlert = computed(() => {
     font-size: 12px;
     font-weight: 600;
 }
-.badge-green  { background: rgba(34,197,94,0.12);  color: #22c55e; }
-.badge-yellow { background: rgba(245,158,11,0.12); color: #f59e0b; }
-.badge-red    { background: rgba(230,57,70,0.12);  color: var(--red); }
-.badge-dim    { background: var(--surface2);        color: var(--text-dim); }
+.badge-green  { background: var(--green-dim);  color: var(--green-ink); }
+.badge-yellow { background: var(--yellow-dim); color: var(--amber-ink); }
+.badge-red    { background: var(--red-dim);    color: var(--red-ink); }
+.badge-dim    { background: var(--surface2);   color: var(--text-dim); }
 
 /* Mini bar */
 .mini-bar-wrap {
@@ -404,10 +430,9 @@ const driftAlert = computed(() => {
     border-radius: 3px;
     transition: width 0.4s ease;
 }
-.mini-bar.badge-green  { background: #22c55e; }
-.mini-bar.badge-yellow { background: #f59e0b; }
+.mini-bar.badge-green  { background: var(--green); }
+.mini-bar.badge-yellow { background: var(--yellow); }
 .mini-bar.badge-red    { background: var(--red); }
-.mini-bar.coverage-bar { background: #3b82f6; }
 
 /* Drift grid */
 .drift-grid {
@@ -419,9 +444,21 @@ const driftAlert = computed(() => {
 .drift-item { }
 .drift-label { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
 .drift-nums  { display: flex; align-items: baseline; gap: 8px; }
-.drift-big   { font-size: 28px; font-weight: 700; color: var(--text); }
-.drift-prev  { font-size: 12px; color: var(--text-dim); }
+.drift-big   { font-size: 28px; font-weight: 700; color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.drift-prev  { font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .drift-arrow { font-size: 18px; font-weight: 700; }
-.trend-up    { color: var(--red); }
-.trend-down  { color: #22c55e; }
+.trend-up    { color: var(--red-ink); }
+.trend-down  { color: var(--green-ink); }
+
+/* Phone fixes. These must come after the base rules above, otherwise the
+   two-column defaults win on source order. */
+.two-col > *, .card { min-width: 0; }
+@media (max-width: 899px) {
+    .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .two-col { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+    .kpi-strip { grid-template-columns: minmax(0, 1fr); }
+    .drift-grid { grid-template-columns: minmax(0, 1fr); }
+}
 </style>

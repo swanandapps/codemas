@@ -387,7 +387,7 @@
       <div class="actor-lane" style="background:var(--browser)"></div>
     </div>
     <div class="actor-col" id="ac-1">
-      <div class="actor-box ac-trainer"><div class="actor-name">Trainer</div><div class="actor-role">ExamOpsView</div></div>
+      <div class="actor-box ac-trainer"><div class="actor-name">Trainer</div><div class="actor-role">Exam report</div></div>
       <div class="actor-lane" style="background:var(--trainer)"></div>
     </div>
     <div class="actor-col" id="ac-2">
@@ -477,7 +477,7 @@ const STEPS = [
   { phase:1, from:1, to:2, label:'PATCH /exams/1/ {is_active: false}',
     title:'Trainer clicks End Exam — the single trigger for all plagiarism detection',
     desc:'PATCH with partial=True so only is_active needs to be sent. This .save() call triggers the pre_save signal on the Exam model before the DB write happens. Celery Beat auto_manage_exams (every 60s) behaves identically — both paths go through the same signal, so manual close and auto-close trigger identical behaviour.',
-    code:`<span class="cm">// ExamOpsView.vue</span>
+    code:`<span class="cm">// EndExamButton.vue (on the exam report)</span>
 <span class="kw">await</span> api.<span class="fn">patch</span>(<span class="str">\`/exams/\${id}/\`</span>, { is_active: <span class="kw">false</span> })
 
 <span class="cm"># Django ExamDetailView.patch() — partial=True key</span>
@@ -554,9 +554,9 @@ ratio = <span class="num">34</span> / baseline  <span class="cm"># = 0.14</span>
 <span class="kw">if</span> count >= <span class="num">3</span>:  <span class="kw">return</span> <span class="num">0.5</span>
 <span class="kw">if</span> count >= <span class="num">1</span>:  <span class="kw">return</span> <span class="num">0.2</span>`},
 
-  { phase:1, from:4, to:4, label:'compute_behavioural_risk() → 0.85, LOW confidence',
-    title:'Combined: policy weights applied → risk 0.85, 3 signals fired → LOW integrity confidence',
-    desc:'4th signal (submission_surprise) scores 0.0 — this is attempt 1, no prior submission to compare against. 3 signals fired → confidence = "low" (LOW integrity confidence = we are least confident this student wrote the code themselves). Score 0.85 exceeds policy.min_risk_score (default 0.20) so a BehaviouralFlag will be written.',
+  { phase:1, from:4, to:4, label:'compute_behavioural_risk() → 0.85, HIGH confidence',
+    title:'Combined: policy weights applied → risk 0.85, 3 signals fired → HIGH flag confidence',
+    desc:'4th signal (submission_surprise) scores 0.0 — this is attempt 1, no prior submission to compare against. 3 signals fired → confidence = "high" (HIGH flag confidence = strongest evidence of misconduct). Score 0.85 exceeds policy.min_risk_score (default 0.20) so a BehaviouralFlag will be written.',
     code:`policy = <span class="fn">get_policy</span>()  <span class="cm"># fetched once per task, not per signal</span>
 risk_score = (
     policy[<span class="str">'paste_weight'</span>]      * <span class="num">1.0</span> +   <span class="cm"># default 0.40</span>
@@ -564,7 +564,7 @@ risk_score = (
     policy[<span class="str">'tab_weight'</span>]        * <span class="num">1.0</span> +   <span class="cm"># default 0.15</span>
     policy[<span class="str">'submission_weight'</span>] * <span class="num">0.0</span>    <span class="cm"># surprise — first attempt</span>
 )  <span class="cm"># = 0.85</span>
-confidence = <span class="str">'low'</span>  <span class="cm"># 3 signals fired → LOW integrity confidence (most suspicious)</span>`},
+confidence = <span class="str">'high'</span>  <span class="cm"># 3 signals fired → HIGH flag confidence (most suspicious)</span>`},
 
   { phase:1, from:4, to:5, label:'BehaviouralFlag.update_or_create()',
     title:'Flag written — risk_score 0.85 > policy.min_risk_score (default 0.20)',
@@ -573,7 +573,7 @@ confidence = <span class="str">'low'</span>  <span class="cm"># 3 signals fired 
   submission=submission,
   defaults={
     <span class="str">'risk_score'</span>:        <span class="num">0.85</span>,
-    <span class="str">'confidence'</span>:        <span class="str">'low'</span>,   <span class="cm"># LOW = most suspicious (3+ signals)</span>
+    <span class="str">'confidence'</span>:        <span class="str">'high'</span>,  <span class="cm"># HIGH = most suspicious (3+ signals)</span>
     <span class="str">'signals_triggered'</span>: [
       <span class="str">"Pasted 89% of final code (187 chars)"</span>,
       <span class="str">"Solved medium in 0m 34s (baseline: 4m 0s)"</span>,
@@ -603,13 +603,13 @@ confidence = <span class="str">'low'</span>  <span class="cm"># 3 signals fired 
 <span class="cm"># T+60s: run_question_plagiarism_check(Q3_id)</span>
 <span class="cm"># T+90s: run_question_plagiarism_check(Q4_id)</span>`},
 
-  { phase:2, from:4, to:5, label:'SELECT LOW-confidence BehaviouralFlags → K=10',
-    title:'Load LOW integrity confidence suspects — the cost gate',
-    desc:'First query of each per-question task. Only LOW confidence flags are loaded — students where 3+ signals fired (most suspicious, least confident they wrote it themselves). If empty, the question is skipped entirely — no TF-IDF, no cosine similarity. This is why Phase 1 must be synchronous: Phase 2 cannot start until all BehaviouralFlags exist.',
+  { phase:2, from:4, to:5, label:'SELECT HIGH-confidence BehaviouralFlags → K=10',
+    title:'Load HIGH flag confidence suspects — the cost gate',
+    desc:'First query of each per-question task. Only HIGH confidence flags are loaded — students where 3+ signals fired (most suspicious). If empty, the question is skipped entirely — no TF-IDF, no cosine similarity. This is why Phase 1 must be synchronous: Phase 2 cannot start until all BehaviouralFlags exist.',
     code:`high_risk_student_ids = <span class="fn">set</span>(
   <span class="cls">BehaviouralFlag</span>.objects
-  .<span class="fn">filter</span>(submission__question=question, confidence=<span class="str">'low'</span>)
-  <span class="cm"># 'low' = LOW integrity confidence = 3+ signals = most suspicious</span>
+  .<span class="fn">filter</span>(submission__question=question, confidence=<span class="str">'high'</span>)
+  <span class="cm"># 'high' = HIGH flag confidence = 3+ signals = most suspicious</span>
   .<span class="fn">values_list</span>(<span class="str">'submission__student_id'</span>, flat=<span class="kw">True</span>)
 )  <span class="cm"># K = 10 out of 200 students</span>
 
@@ -662,7 +662,7 @@ matrix = vectorizer.<span class="fn">fit_transform</span>(normalized)
 
   { phase:2, from:4, to:4, label:'Upper triangle loop — skip non-suspect pairs',
     title:'O(K×N) = 2,000 checks instead of O(N²) = 19,900',
-    desc:'Loop only the upper triangle (i < j) so each pair is checked once. Key filter: if neither student is in the LOW-confidence suspect set, skip. Reduces from 19,900 all-pairs to 2,000 — K×N where K=10, N=200. Similarity threshold read from policy once at task start.',
+    desc:'Loop only the upper triangle (i < j) so each pair is checked once. Key filter: if neither student is in the HIGH-confidence suspect set, skip. Reduces from 19,900 all-pairs to 2,000 — K×N where K=10, N=200. Similarity threshold read from policy once at task start.',
     code:`policy = <span class="fn">get_policy</span>()  <span class="cm"># fetched once — Redis hit</span>
 <span class="kw">for</span> i <span class="kw">in</span> <span class="fn">range</span>(<span class="fn">len</span>(all_subs)):
   <span class="kw">for</span> j <span class="kw">in</span> <span class="fn">range</span>(i + <span class="num">1</span>, <span class="fn">len</span>(all_subs)):
@@ -690,12 +690,12 @@ matrix = vectorizer.<span class="fn">fit_transform</span>(normalized)
 const PHASE_META = {
   1: {
     name:    'Behavioural Analysis',
-    tagline: 'Browser signals stored per submission during the exam. At exam close, pre_save signal queues run_exam_plagiarism_check. Phase 1 runs synchronously inside that task — each submission scored on paste ratio, speed, tab switches, attempt discontinuity — using policy weights from Redis. LOW confidence = 3+ signals = most suspicious. Phase 2 cannot start until Phase 1 loop exits.',
+    tagline: 'Browser signals stored per submission during the exam. At exam close, pre_save signal queues run_exam_plagiarism_check. Phase 1 runs synchronously inside that task — each submission scored on paste ratio, speed, tab switches, attempt discontinuity — using policy weights from Redis. HIGH confidence = 3+ signals = most suspicious. Phase 2 cannot start until Phase 1 loop exits.',
     color:   '#6366f1',
   },
   2: {
     name:    'Similarity Cross-Comparison',
-    tagline: 'After Phase 1 loop completes, run_exam_plagiarism_check queues one run_question_plagiarism_check per question with 30s stagger. Each task: load LOW-confidence suspects → load full cohort → TF-IDF vectorize once → cosine similarity → flag pairs above policy.similarity_threshold.',
+    tagline: 'After Phase 1 loop completes, run_exam_plagiarism_check queues one run_question_plagiarism_check per question with 30s stagger. Each task: load HIGH-confidence suspects → load full cohort → TF-IDF vectorize once → cosine similarity → flag pairs above policy.similarity_threshold.',
     color:   '#e63946',
   },
 };

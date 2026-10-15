@@ -13,63 +13,32 @@
                 <div class="hero-left">
                     <div class="exam-title-row">
                         <h1>{{ exam.title }}</h1>
-                        <span :class="['status-badge', exam.is_active ? 'active' : 'inactive']">
-                            {{ exam.is_active ? 'Active' : 'Closed' }}
+                        <span v-if="exam.finished_at" class="status-badge inactive">Submitted</span>
+                        <span v-else :class="['status-badge', exam.status === 'live' ? 'active' : 'inactive']">
+                            {{ examStatusLabel(exam.status) }}
                         </span>
                     </div>
                     <p class="exam-desc">{{ exam.description }}</p>
                     <div class="exam-meta">
                         <span class="meta-chip">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                            {{ exam.duration_minutes }} minutes
+                            {{ plural(exam.duration_minutes, 'minute') }}
                         </span>
                         <span class="meta-chip">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
-                            {{ exam.questions.length }} questions
+                            {{ plural(exam.questions.length, 'question') }}
                         </span>
                     </div>
                 </div>
                 <div class="hero-actions">
-                    <button v-if="exam.is_active" class="start-btn" @click="startExam">
-                        Start Exam →
+                    <button v-if="canStartExam(exam)" class="start-btn" @click="startExam">
+                        Start exam
                     </button>
-                    <p v-else-if="!authStore.isTrainer" class="closed-msg">This exam is closed</p>
+                    <p v-else-if="exam.finished_at" class="closed-msg">
+                        You've submitted this exam. <router-link to="/results">See results</router-link>
+                    </p>
+                    <p v-else class="closed-msg">This exam is closed</p>
                 </div>
-            </div>
-
-            <!-- Trainer publish controls -->
-            <div v-if="authStore.isTrainer" class="publish-card">
-                <div class="publish-row">
-                    <div>
-                        <div class="publish-title">
-                            {{ exam.is_active ? 'This exam is live' : 'This exam is a draft' }}
-                        </div>
-                        <div class="publish-sub">
-                            {{ exam.is_active ? 'Students can take it now.' : 'Activate it to let students take it.' }}
-                        </div>
-                    </div>
-                    <button
-                        :class="['publish-btn', exam.is_active ? 'close' : 'activate']"
-                        :disabled="publishing"
-                        @click="toggleActive"
-                    >
-                        {{ publishing ? '…' : (exam.is_active ? 'Close Exam' : 'Activate Now') }}
-                    </button>
-                </div>
-
-                <div class="schedule-row">
-                    <div class="sched-field">
-                        <label>Opens at (optional)</label>
-                        <input type="datetime-local" v-model="schedule.start" />
-                    </div>
-                    <div class="sched-field">
-                        <label>Closes at (optional)</label>
-                        <input type="datetime-local" v-model="schedule.end" />
-                    </div>
-                    <button class="sched-btn" :disabled="publishing" @click="saveSchedule">Save schedule</button>
-                </div>
-                <p class="sched-hint">With a schedule set, the exam auto-opens and auto-closes at those times.</p>
-                <p v-if="publishError" class="state-msg error">{{ publishError }}</p>
             </div>
 
             <div class="section-header">
@@ -88,13 +57,18 @@
                         <div class="q-info">
                             <div class="q-title-row">
                                 <h3>{{ question.title }}</h3>
-                                <span :class="['diff-badge', question.difficulty]">{{ question.difficulty }}</span>
-                                <span class="pts-badge">{{ question.points }} pts</span>
+                                <span :class="['diff-badge', question.difficulty]">
+                                    <span class="diff-dot" :class="question.difficulty"></span>
+                                    {{ humanize(question.difficulty) }}
+                                </span>
+                                <span class="pts-badge">{{ plural(question.points, 'point') }}</span>
                             </div>
                             <p class="q-desc">{{ question.description }}</p>
                             <div class="q-meta">
-                                <span>{{ question.max_attempts }} attempts max</span>
-                                <span v-if="question.tags" class="tags">{{ question.tags }}</span>
+                                <span>{{ plural(question.max_attempts, 'attempt') }} max</span>
+                                <span v-if="questionTags(question.tags).length" class="tags">
+                                    <span v-for="tag in questionTags(question.tags)" :key="tag" class="tag-chip">{{ tag }}</span>
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -108,7 +82,8 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import api from '../api'
-import { useAuthStore } from '../stores/auth'
+import { plural, humanize } from '../utils/format'
+import { canStartExam, examStatusLabel, type ExamStatus } from '../utils/exams'
 
 interface Question {
     id: number
@@ -128,35 +103,24 @@ interface Exam {
     is_active: boolean
     start_time: string | null
     end_time: string | null
+    status: ExamStatus
+    finished_at?: string | null   // students only: when they submitted the exam
+    sections: string[]
     questions: Question[]
 }
 
+// The student's exam start page; trainers are sent to the exam report by the router.
 const router = useRouter()
 const route = useRoute()
-const authStore = useAuthStore()
 
 const exam = ref<Exam | null>(null)
 const loading = ref<boolean>(true)
 const error = ref<string>('')
 
-const publishing = ref<boolean>(false)
-const publishError = ref<string>('')
-const schedule = ref<{ start: string; end: string }>({ start: '', end: '' })
-
-// Convert an ISO timestamp to the value a datetime-local input expects
-function toLocalInput(iso: string | null): string {
-    if (!iso) return ''
-    const d = new Date(iso)
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
 onMounted(async () => {
     try {
         const res = await api.get(`/exams/${route.params.id}/`)
         exam.value = res.data
-        schedule.value.start = toLocalInput(res.data.start_time)
-        schedule.value.end = toLocalInput(res.data.end_time)
     } catch (e: any) {
         error.value = e.response?.data?.error || 'Failed to load exam'
     } finally {
@@ -164,39 +128,13 @@ onMounted(async () => {
     }
 })
 
+function questionTags(tags: string | null | undefined): string[] {
+    if (!tags) return []
+    return tags.split(',').map(t => t.trim()).filter(Boolean)
+}
+
 function startExam(): void {
     router.push(`/exams/${route.params.id}/take`)
-}
-
-async function toggleActive(): Promise<void> {
-    if (!exam.value) return
-    publishing.value = true
-    publishError.value = ''
-    try {
-        const res = await api.patch(`/exams/${exam.value.id}/`, { is_active: !exam.value.is_active })
-        exam.value.is_active = res.data.is_active
-    } catch (e: any) {
-        publishError.value = e.response?.data?.error || 'Failed to update exam'
-    } finally {
-        publishing.value = false
-    }
-}
-
-async function saveSchedule(): Promise<void> {
-    if (!exam.value) return
-    publishing.value = true
-    publishError.value = ''
-    try {
-        const payload = {
-            start_time: schedule.value.start ? new Date(schedule.value.start).toISOString() : null,
-            end_time: schedule.value.end ? new Date(schedule.value.end).toISOString() : null,
-        }
-        await api.patch(`/exams/${exam.value.id}/`, payload)
-    } catch (e: any) {
-        publishError.value = e.response?.data?.error || 'Failed to save schedule'
-    } finally {
-        publishing.value = false
-    }
 }
 </script>
 
@@ -206,19 +144,22 @@ async function saveSchedule(): Promise<void> {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 7px 14px;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
+    padding: 9px 18px;
+    min-height: 40px;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-pill);
+    color: var(--text);
+    font-family: var(--font-display);
     font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
     margin-bottom: 28px;
 }
-.back-btn:hover { border-color: var(--border2); color: var(--text); }
+.back-btn:hover { border-color: var(--border2); background: var(--surface2); }
 .state-msg { color: var(--text-muted); padding: 40px 0; }
-.state-msg.error { color: var(--red); }
+.state-msg.error { color: var(--red-ink); }
 .exam-hero {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -227,12 +168,14 @@ async function saveSchedule(): Promise<void> {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 24px;
     margin-bottom: 32px;
 }
 .exam-title-row {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
     margin-bottom: 8px;
 }
@@ -244,10 +187,10 @@ async function saveSchedule(): Promise<void> {
     font-weight: 700;
     flex-shrink: 0;
 }
-.status-badge.active { background: rgba(46,204,113,0.12); color: var(--green); }
-.status-badge.inactive { background: var(--red-dim); color: var(--red); }
-.exam-desc { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; }
-.exam-meta { display: flex; gap: 12px; }
+.status-badge.active { background: var(--green-dim); color: var(--green-ink); }
+.status-badge.inactive { background: var(--surface2); color: var(--text-muted); }
+.exam-desc { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; white-space: pre-line; }
+.exam-meta { display: flex; flex-wrap: wrap; gap: 12px; }
 .meta-chip {
     display: inline-flex;
     align-items: center;
@@ -261,51 +204,21 @@ async function saveSchedule(): Promise<void> {
 }
 .start-btn {
     padding: 12px 28px;
-    background: var(--red);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-ink);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-display);
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
     transition: background 0.15s;
 }
-.start-btn:hover { background: var(--red-hover); }
+.start-btn:hover { background: var(--accent-hover); }
 .closed-msg { color: var(--text-dim); font-size: 14px; }
 .hero-actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 
-/* Trainer publish controls */
-.publish-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 18px 20px;
-    margin-bottom: 32px;
-}
-.publish-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.publish-title { font-size: 14px; font-weight: 700; color: var(--text); }
-.publish-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
-.publish-btn {
-    padding: 9px 20px; border: none; border-radius: var(--radius-sm);
-    font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
-}
-.publish-btn.activate { background: var(--green); color: #fff; }
-.publish-btn.close { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
-.publish-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.schedule-row { display: flex; gap: 12px; align-items: flex-end; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
-.sched-field { display: flex; flex-direction: column; gap: 4px; }
-.sched-field label { font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.4px; }
-.sched-field input {
-    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
-    padding: 7px 10px; border-radius: var(--radius-sm); font-size: 13px;
-}
-.sched-btn {
-    padding: 8px 16px; background: var(--surface2); border: 1px solid var(--border);
-    color: var(--text-muted); border-radius: var(--radius-sm); font-size: 13px; cursor: pointer;
-}
-.sched-btn:hover { border-color: var(--border2); color: var(--text); }
-.sched-hint { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
 .section-header {
     display: flex;
     align-items: center;
@@ -346,14 +259,38 @@ async function saveSchedule(): Promise<void> {
     flex-shrink: 0;
 }
 .q-info { flex: 1; }
-.q-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.q-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .q-title-row h3 { font-size: 15px; color: var(--text); }
-.diff-badge { padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 700; text-transform: capitalize; }
-.diff-badge.easy { background: rgba(46,204,113,0.12); color: var(--green); }
-.diff-badge.medium { background: var(--yellow-dim); color: var(--yellow); }
-.diff-badge.hard { background: var(--red-dim); color: var(--red); }
-.pts-badge { padding: 2px 8px; background: var(--blue-dim); color: var(--blue); border-radius: 10px; font-size: 11px; font-weight: 700; }
-.q-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 10px; }
-.q-meta { display: flex; gap: 16px; font-size: 12px; color: var(--text-dim); }
-.tags { color: var(--text-dim); }
+.diff-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border-radius: 10px;
+    background: var(--surface2);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+}
+.diff-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--text-dim); }
+.diff-dot.easy { background: var(--green); }
+.diff-dot.medium { background: var(--yellow); }
+.diff-dot.hard { background: var(--red); }
+.pts-badge { padding: 2px 8px; background: var(--surface2); color: var(--text-muted); border-radius: 10px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.q-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 10px; white-space: pre-line; }
+.q-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; color: var(--text-dim); }
+.tags { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.tag-chip {
+    background: var(--surface2);
+    color: var(--text-muted);
+    padding: 2px 9px;
+    border-radius: 10px;
+    font-size: 11px;
+}
+
+@media (max-width: 600px) {
+    .exam-hero { flex-direction: column; }
+    .hero-actions { align-items: stretch; width: 100%; }
+    .start-btn { width: 100%; }
+}
 </style>

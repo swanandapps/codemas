@@ -10,30 +10,31 @@
         <div class="filters">
             <input v-model="search" placeholder="Search by username..." />
             <select v-model="cohortFilter">
-                <option value="">All Cohorts</option>
+                <option value="">All sections</option>
                 <option v-for="c in cohorts" :key="c" :value="c">{{ c }}</option>
             </select>
         </div>
 
         <div v-if="loading" class="state-msg">Loading students...</div>
 
-        <table v-else class="table">
+        <div v-else class="table-scroll">
+        <table class="table">
             <thead>
                 <tr>
                     <th class="sortable" @click="toggleSort('username')">
                         Username <span class="sort-ind">{{ sortIcon('username') }}</span>
                     </th>
                     <th class="sortable" @click="toggleSort('cohort')">
-                        Cohort <span class="sort-ind">{{ sortIcon('cohort') }}</span>
+                        Section <span class="sort-ind">{{ sortIcon('cohort') }}</span>
                     </th>
                     <th class="sortable" @click="toggleSort('total_submissions')">
                         Submissions <span class="sort-ind">{{ sortIcon('total_submissions') }}</span>
                     </th>
-                    <th class="sortable" @click="toggleSort('pass_rate')">
-                        Pass Rate <span class="sort-ind">{{ sortIcon('pass_rate') }}</span>
+                    <th class="sortable" :title="METRIC_HELP.acceptedStudent" @click="toggleSort('accepted_rate')">
+                        Success rate <span class="sort-ind">{{ sortIcon('accepted_rate') }}</span>
                     </th>
-                    <th class="sortable" @click="toggleSort('confidence_rank')">
-                        Confidence <span class="sort-ind">{{ sortIcon('confidence_rank') }}</span>
+                    <th class="sortable" :title="METRIC_HELP.confidence" @click="toggleSort('confidence_rank')">
+                        {{ METRIC_LABEL.confidence }} <span class="sort-ind">{{ sortIcon('confidence_rank') }}</span>
                     </th>
                     <th></th>
                 </tr>
@@ -44,41 +45,44 @@
                     <td>{{ s.cohort || '—' }}</td>
                     <td>{{ s.total_submissions }}</td>
                     <td>
-                        <span :class="['rate-badge', passRateClass(s.pass_rate)]">
-                            {{ s.pass_rate?.toFixed(1) }}%
+                        <span :class="['rate-badge', passRateClass(s.accepted_rate)]">
+                            {{ formatPct(s.accepted_rate) }}
                         </span>
                     </td>
                     <td>
-                        <span v-if="s.max_confidence" :class="['conf-badge', s.max_confidence]">
-                            {{ s.max_confidence.toUpperCase() }}
-                            <span class="risk-pct">{{ s.max_risk_score }}%</span>
+                        <span v-if="s.max_confidence" :class="['conf-badge', confidenceClass(s.max_confidence)]" :title="METRIC_HELP.confidence">
+                            {{ humanize(s.max_confidence) }}
+                            <span class="risk-pct" :title="METRIC_HELP.risk">Risk {{ s.max_risk ?? '—' }}</span>
                         </span>
                         <span v-else class="clean-badge">Clean</span>
                     </td>
                     <td>
-                        <button class="view-btn" @click="router.push(`/dashboard/students/${s.student_id}`)">
+                        <button type="button" class="view-btn" @click="router.push(`/dashboard/students/${s.student_id}`)">
                             View
                         </button>
                     </td>
                 </tr>
             </tbody>
         </table>
+        </div>
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
+import { formatPct, humanize } from '../utils/format'
+import { METRIC_HELP, METRIC_LABEL, confidenceClass, type FlagConfidence } from '../utils/metrics'
 
 interface StudentSummary {
     student_id: number
     username: string
     cohort: string
     total_submissions: number
-    pass_rate: number
-    max_confidence: 'high' | 'medium' | 'low' | null
-    max_risk_score: number | null
+    accepted_rate: number | null
+    max_confidence: FlagConfidence | null
+    max_risk: number | null
     confidence_rank: number
 }
 
@@ -86,7 +90,8 @@ const router = useRouter()
 const students = ref<StudentSummary[]>([])
 const loading = ref<boolean>(true)
 const search = ref<string>('')
-const cohortFilter = ref<string>('')
+const route = useRoute()
+const cohortFilter = ref<string>(typeof route.query.section === 'string' ? route.query.section : '')  // set by the Overview section cards
 const sortBy = ref<string>('username')
 const sortDir = ref<1 | -1>(1)
 
@@ -117,11 +122,11 @@ const sorted = computed<StudentSummary[]>(() =>
 
 function toggleSort(col: string) {
     if (sortBy.value === col) sortDir.value = sortDir.value === 1 ? -1 : 1
-    else { sortBy.value = col; sortDir.value = col === 'confidence_rank' || col === 'pass_rate' ? -1 : 1 }
+    else { sortBy.value = col; sortDir.value = col === 'confidence_rank' || col === 'accepted_rate' ? -1 : 1 }
 }
 
 function sortIcon(col: string): string {
-    if (sortBy.value !== col) return '⇅'
+    if (sortBy.value !== col) return ''
     return sortDir.value === 1 ? '▲' : '▼'
 }
 
@@ -134,7 +139,8 @@ onMounted(async () => {
     }
 })
 
-function passRateClass(rate: number): string {
+function passRateClass(rate: number | null): string {
+    if (rate === null || rate === undefined) return ''
     if (rate >= 70) return 'rate-good'
     if (rate >= 40) return 'rate-mid'
     return 'rate-low'
@@ -148,8 +154,10 @@ function passRateClass(rate: number): string {
 .filters input { width: 260px; }
 .filters select { width: auto; }
 .state-msg { color: var(--text-muted); padding: 40px 0; }
+.table-scroll { overflow-x: auto; }
 .table {
     width: 100%;
+    min-width: 620px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -160,8 +168,6 @@ function passRateClass(rate: number): string {
     padding: 12px 16px;
     background: var(--surface2);
     font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     color: var(--text-dim);
     text-align: left;
     border-bottom: 1px solid var(--border);
@@ -182,10 +188,10 @@ function passRateClass(rate: number): string {
 .table tbody tr:last-child td { border-bottom: none; }
 .table tbody tr:hover td { background: var(--surface2); }
 .name-cell { color: var(--text); font-weight: 600; }
-.rate-badge { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
-.rate-good { background: rgba(16,185,129,0.12); color: var(--green); }
-.rate-mid { background: var(--yellow-dim); color: var(--yellow); }
-.rate-low { background: var(--red-dim); color: var(--red); }
+.rate-badge { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rate-good { background: var(--green-dim); color: var(--green-ink); }
+.rate-mid { background: var(--yellow-dim); color: var(--amber-ink); }
+.rate-low { background: var(--red-dim); color: var(--red-ink); }
 
 .conf-badge {
     display: inline-flex;
@@ -195,17 +201,13 @@ function passRateClass(rate: number): string {
     border-radius: 20px;
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.3px;
 }
-.conf-badge.low { background: rgba(230,57,70,0.15); color: #e63946; }
-.conf-badge.medium { background: rgba(245,158,11,0.15); color: #f59e0b; }
-.conf-badge.high { background: rgba(59,130,246,0.15); color: #3b82f6; }
 .risk-pct { font-size: 10px; font-weight: 400; opacity: 0.8; }
 
 .clean-badge {
     padding: 3px 10px;
-    background: rgba(16,185,129,0.1);
-    color: var(--green);
+    background: var(--green-dim);
+    color: var(--green-ink);
     border-radius: 20px;
     font-size: 12px;
     font-weight: 600;
@@ -220,5 +222,11 @@ function passRateClass(rate: number): string {
     cursor: pointer;
     transition: all 0.15s;
 }
-.view-btn:hover { border-color: var(--green); color: var(--green); }
+.view-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+    .filters { flex-wrap: wrap; }
+    .filters input { width: 100%; }
+}
 </style>

@@ -27,6 +27,7 @@ def get_policy() -> dict:
             'submission_weight':    obj.submission_weight,
             'min_risk_score':       obj.min_risk_score,
             'similarity_threshold': obj.similarity_threshold,
+            'compare_min_risk':     obj.compare_min_risk,
             'easy_baseline_s':      obj.easy_baseline_s,
             'medium_baseline_s':    obj.medium_baseline_s,
             'hard_baseline_s':      obj.hard_baseline_s,
@@ -60,22 +61,23 @@ def paste_signal(submission) -> tuple[float, list[str]]:
         return 0.0, signals
 
     paste_ratio = submission.paste_char_count / max(len(submission.code), 1)
+    shown = min(paste_ratio, 1.0)  # paste-then-delete can push the ratio past 100%; never show that
 
     if paste_ratio >= 0.7:
         signals.append(
-            f"Pasted {int(paste_ratio * 100)}% of final code "
+            f"Pasted {int(shown * 100)}% of final code "
             f"({submission.paste_char_count} chars)"
         )
         return 1.0, signals
     elif paste_ratio >= 0.5:
         signals.append(
-            f"Pasted {int(paste_ratio * 100)}% of final code "
+            f"Pasted {int(shown * 100)}% of final code "
             f"({submission.paste_char_count} chars)"
         )
         return 0.7, signals
     elif paste_ratio >= 0.3:
         signals.append(
-            f"Paste detected ({int(paste_ratio * 100)}% of code)"
+            f"Paste detected ({int(shown * 100)}% of code)"
         )
         return 0.3, signals
 
@@ -109,21 +111,18 @@ def time_signal(submission, baselines: dict | None = None) -> tuple[float, list[
         m, sec = divmod(s, 60)
         return f"{m}m {sec}s" if m else f"{sec}s"
 
+    # elapsed is time since the student started, at this attempt — passed or not
+    fast = (f"Submitted {fmt_time(elapsed)} after starting, on a{'n' if difficulty[:1] in 'aeiou' else ''} "
+            f"{difficulty} problem (typical: {fmt_time(baseline)})")
     if ratio <= 0.2:
-        signals.append(
-            f"Solved {difficulty} problem in {fmt_time(elapsed)} "
-            f"(baseline: {fmt_time(baseline)})"
-        )
+        signals.append(fast)
         return 1.0, signals
     elif ratio <= 0.4:
-        signals.append(
-            f"Solved {difficulty} problem in {fmt_time(elapsed)} "
-            f"(baseline: {fmt_time(baseline)})"
-        )
+        signals.append(fast)
         return 0.7, signals
     elif ratio <= 0.6:
         signals.append(
-            f"Completed faster than expected: {fmt_time(elapsed)}"
+            f"Submitted faster than expected: {fmt_time(elapsed)} after starting"
         )
         return 0.3, signals
 
@@ -214,7 +213,11 @@ def compute_behavioural_risk(submission, Submission, policy: dict | None = None)
     """
     Runs four signals and combines them into a single risk score.
     Weights and baselines come from PlagiarismPolicy (via Redis cache).
-    Confidence is based on how many signals fired, not just total score.
+    Confidence = confidence that the flag indicates misconduct, based on how
+    many independent signals fired (not the total score):
+      high   = 3+ signals (most suspicious)
+      medium = 2 signals
+      low    = 0-1 signals
     """
     p = policy or get_policy()
     baselines = {
@@ -240,11 +243,11 @@ def compute_behavioural_risk(submission, Submission, policy: dict | None = None)
     signals_fired = sum(1 for s in [p_score, t_score, tab_score, sub_score] if s > 0)
 
     if signals_fired >= 3:
-        confidence = 'low'   # low confidence they wrote it themselves — most suspicious
-    elif signals_fired >= 2:
+        confidence = 'high'    # strong evidence of misconduct — most suspicious
+    elif signals_fired == 2:
         confidence = 'medium'
     else:
-        confidence = 'high'  # high confidence they wrote it themselves — clean signal
+        confidence = 'low'     # a single signal is weak evidence on its own
 
     return {
         'risk_score':        risk_score,
@@ -284,7 +287,18 @@ def run_behavioural_check(submission_id: int):
     Submission.objects.filter(pk=submission_id).update(behavioural_check_done=True)
 
     if result['risk_score'] <= policy['min_risk_score']:
-        # below threshold — not worth storing
+        # below threshold — not worth storing. On a rerun under a different policy, a
+        # flag nobody has acted on no longer stands; a reviewed or disputed one keeps
+        # the trainer's decision.
+        stale = BehaviouralFlag.objects.filter(submission=submission, review_status='pending')
+        if stale.exists():
+            from django.db.models import Q
+            from support.models import DisputeRequest
+            disputed = DisputeRequest.objects.filter(   # a legacy per-flag dispute, or an appeal on the exam
+                Q(flag_type='behavioural', flag_id__in=stale.values_list('id', flat=True))
+                | Q(student_id=submission.student_id, exam_id=submission.exam_id)).exists()
+            if not disputed:
+                stale.delete()
         print(f'[BEHAVIOURAL] {submission.student.username} Q{submission.question_id} '
               f'— clean (score={result["risk_score"]:.2f})')
         return
@@ -400,7 +414,8 @@ def normalize_code(code: str, language: str) -> str:
 # ─── Batch Cross-Comparison (only HIGH-risk students) ────────────────────────
 
 @shared_task
-def run_exam_plagiarism_check(exam_id: int, triggered_by_id: int = None, trigger: str = 'exam_close'):
+def run_exam_plagiarism_check(exam_id: int, triggered_by_id: int = None, trigger: str = 'exam_close',
+                              notify: bool = True):
     """
     Triggered when exam closes. Two phases run sequentially in this task:
 
@@ -412,9 +427,17 @@ def run_exam_plagiarism_check(exam_id: int, triggered_by_id: int = None, trigger
       HIGH-confidence behavioural suspects. Phase 1 must complete first so
       the confidence filters in Phase 2 have data to work with.
 
+    HIGH confidence = 3+ behavioural signals fired, i.e. the students most
+    likely to have committed misconduct.
+
     Why only HIGH confidence in Phase 2: reduces O(N²) all-pairs to
     O(K·N) where K << N. For 200 students with 10 suspects: 2,000 checks
     instead of 19,900. Same signal quality, ~10x less compute.
+
+    notify is passed through to every per-question task (see
+    run_question_plagiarism_check). seed_data passes notify=False and runs
+    this task eagerly so demo data gets the real exam-close run without
+    emailing trainers or calling the LLM.
     """
     from django.db.models import Avg, Count
     from django.utils import timezone
@@ -485,20 +508,28 @@ def run_exam_plagiarism_check(exam_id: int, triggered_by_id: int = None, trigger
         b_avg_risk_score=round(b_agg['avg_risk'], 4) if b_agg['avg_risk'] else None,
     )
 
-    # Phase 2 — queue per-question cross-compare tasks, staggered to avoid CPU spike
+    # Phase 2 — queue per-question cross-compare tasks. Exam-close runs are staggered so many
+    # exams closing together don't spike the worker; a trainer-started run is one exam they're
+    # waiting on, so it goes at once.
+    stagger = 0 if trigger == 'manual_rerun' else 30
     for i, question in enumerate(exam.questions.all()):
         run_question_plagiarism_check.apply_async(
             args=[question.id, run.pk],
-            countdown=i * 30,
+            kwargs={'notify': notify},
+            countdown=i * stagger,
         )
 
     print(f'[PLAGIARISM] Phase 2 queued — {questions_count} questions for exam {exam_id}')
 
 
 @shared_task
-def run_question_plagiarism_check(question_id: int, run_id: int = None):
+def run_question_plagiarism_check(question_id: int, run_id: int = None, notify: bool = True):
     """
     Cross-compares flagged students against the FULL cohort for this question.
+
+    notify=False skips the trainer email and the AI explanation for new pairs.
+    Detection is identical; seed_data uses it to run this exact Phase 2
+    synchronously without emailing or calling the LLM for demo data.
 
     Why not just compare flagged vs flagged:
       A flagged student may have copied from someone with clean behaviour signals
@@ -506,7 +537,7 @@ def run_question_plagiarism_check(question_id: int, run_id: int = None):
       compared suspects against each other.
 
     Strategy:
-      1. Identify HIGH-confidence behavioural suspects (K students)
+      1. Identify HIGH-confidence (3+ signal) behavioural suspects (K students)
       2. Pull ALL submissions for the question (N students)
       3. TF-IDF vectorize the full cohort once — O(N·V)
       4. Check only pairs where at least one side is a suspect — O(K·N)
@@ -529,10 +560,13 @@ def run_question_plagiarism_check(question_id: int, run_id: int = None):
 
     print(f'[PLAGIARISM] cross-compare for question: {question.title}')
 
-    # who are our suspects — HIGH confidence behavioural flags only
+    # who are our suspects: risk at or above the policy's compare threshold (so the
+    # weights decide, e.g. a heavy paste alone), or 3+ signals (high confidence)
+    from django.db.models import Q
     high_risk_student_ids = set(
         BehaviouralFlag.objects
-        .filter(submission__question=question, confidence='high')
+        .filter(submission__question=question)
+        .filter(Q(risk_score__gte=policy.get('compare_min_risk', 0.35)) | Q(confidence='high'))
         .values_list('submission__student_id', flat=True)
     )
 
@@ -546,9 +580,11 @@ def run_question_plagiarism_check(question_id: int, run_id: int = None):
 
     # fetch the best submission for EVERY student who answered this question
     # (passed attempt if any, otherwise latest attempt)
+    # in student id order, so every pair is (lower student id, higher student id) on every run
     all_student_ids = (
         Submission.objects
         .filter(question=question)
+        .order_by('student_id')  # replaces Meta ordering (-submitted_at), which would make DISTINCT per (student, time)
         .values_list('student_id', flat=True)
         .distinct()
     )
@@ -584,6 +620,8 @@ def run_question_plagiarism_check(question_id: int, run_id: int = None):
         sim_matrix = cosine_similarity(matrix)
     except Exception as e:
         print(f'[PLAGIARISM] vectorization error Q{question_id}: {e}')
+        if run_id:  # still count the question, or the run stays "running" forever
+            _update_run_question_done(run_id, new_flags=0, pairs_90=0, pairs_80=0)
         return
 
     flagged = 0
@@ -606,20 +644,8 @@ def run_question_plagiarism_check(question_id: int, run_id: int = None):
             similarity = float(sim_matrix[i][j])
 
             if similarity >= policy['similarity_threshold']:
-                _, created = PlagiarismFlag.objects.get_or_create(
-                    submission_1=sub_a,
-                    submission_2=sub_b,
-                    defaults={
-                        'similarity_score': similarity,
-                        'flagged': True,
-                        'detection_method': 'behavioural_filtered_tfidf',
-                    }
-                )
-                if not created:
-                    PlagiarismFlag.objects.filter(
-                        submission_1=sub_a, submission_2=sub_b
-                    ).update(similarity_score=similarity)
-                else:
+                pf, created = _save_pair_flag(PlagiarismFlag, question, sub_a, sub_b, similarity)
+                if created:
                     flagged += 1
                     print(
                         f'[PLAGIARISM] PAIR FLAGGED '
@@ -627,17 +653,17 @@ def run_question_plagiarism_check(question_id: int, run_id: int = None):
                         f'vs {sub_b.student.username} ({"suspect" if b_is_suspect else "source"}) '
                         f'sim={similarity:.2f}'
                     )
-                    from codemas.notifications import notify_plagiarism_flagged
-                    pf = PlagiarismFlag.objects.get(submission_1=sub_a, submission_2=sub_b)
-                    notify_plagiarism_flagged(pf)
+                    if notify:
+                        from codemas.notifications import notify_plagiarism_flagged
+                        notify_plagiarism_flagged(pf)
 
-                    # AI explanation (async, best-effort) — generated alongside this
-                    # Layer 2 pass for the newly flagged pair. Never blocks detection.
-                    try:
-                        from ai.tasks import explain_plagiarism
-                        explain_plagiarism.delay(pf.id)
-                    except Exception as e:
-                        print(f'[AI] failed to enqueue plagiarism explanation: {e}')
+                        # AI explanation (async, best-effort) — generated alongside this
+                        # Layer 2 pass for the newly flagged pair. Never blocks detection.
+                        try:
+                            from ai.tasks import explain_plagiarism
+                            explain_plagiarism.delay(pf.id)
+                        except Exception as e:
+                            print(f'[AI] failed to enqueue plagiarism explanation: {e}')
 
                 if similarity >= 0.90:
                     pairs_90 += 1
@@ -651,6 +677,37 @@ def run_question_plagiarism_check(question_id: int, run_id: int = None):
         _update_run_question_done(run_id, new_flags=flagged, pairs_90=pairs_90, pairs_80=pairs_80)
 
     print(f'[PLAGIARISM] Q{question_id} done — {flagged} new pair flags')
+
+
+def _save_pair_flag(PlagiarismFlag, question, sub_a, sub_b, similarity):
+    """One flag per (question, student pair), whichever submissions it was raised on.
+
+    A rerun after a student's best submission changed updates the pair's existing flag
+    (new submissions and score) and keeps the trainer's review status, note and reviewer.
+    sub_a belongs to the lower student id. Unreviewed duplicates left by older runs are
+    removed. Returns (flag, created)."""
+    from django.db.models import Q
+    a, b = sub_a.student_id, sub_b.student_id
+    same_pair = list(
+        PlagiarismFlag.objects.filter(submission_1__question=question)
+        .filter(Q(submission_1__student_id=a, submission_2__student_id=b)
+                | Q(submission_1__student_id=b, submission_2__student_id=a))
+    )
+    if not same_pair:
+        return PlagiarismFlag.objects.create(
+            submission_1=sub_a, submission_2=sub_b, similarity_score=similarity,
+            flagged=True, detection_method='behavioural_filtered_tfidf',
+        ), True
+
+    # keep a reviewed flag over a pending one, then the one already on these submissions, then the oldest
+    exact = lambda f: (f.submission_1_id, f.submission_2_id) == (sub_a.id, sub_b.id)
+    keep = min(same_pair, key=lambda f: (f.review_status == 'pending', not exact(f), f.id))
+    PlagiarismFlag.objects.filter(pk__in=[f.pk for f in same_pair if f is not keep and f.review_status == 'pending']).delete()
+    keep.submission_1, keep.submission_2 = sub_a, sub_b
+    keep.similarity_score = similarity
+    keep.flagged = True
+    keep.save(update_fields=['submission_1', 'submission_2', 'similarity_score', 'flagged'])
+    return keep, False
 
 
 def _update_run_question_done(run_id: int, new_flags: int, pairs_90: int, pairs_80: int):

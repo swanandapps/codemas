@@ -2,13 +2,13 @@
     <div class="policy-page">
         <div class="page-header">
             <div>
-                <h1>Detection Policy</h1>
+                <h1>Detection policy</h1>
                 <p class="page-sub">Configure plagiarism detection thresholds — changes apply to future checks</p>
             </div>
             <div style="display:flex;gap:10px;align-items:center">
                 <button class="tab-btn" :class="{ active: activeTab === 'policy' }" @click="activeTab = 'policy'">Policy</button>
                 <button class="tab-btn" :class="{ active: activeTab === 'changelog' }" @click="switchToChangelog">Changelog</button>
-                <button class="tab-btn" :class="{ active: activeTab === 'runs' }" @click="switchToRuns">Run History</button>
+                <button class="tab-btn" :class="{ active: activeTab === 'runs' }" @click="switchToRuns">Run history</button>
             </div>
         </div>
 
@@ -19,10 +19,10 @@
             <div v-else class="policy-grid">
                 <!-- Signal Weights -->
                 <div class="policy-card">
-                    <div class="card-title">Signal Weights</div>
+                    <div class="card-title">Signal weights</div>
                     <p class="card-desc">How much each signal contributes to the behavioural risk score. Weights must sum to 1.0.</p>
                     <div class="weight-sum" :class="weightSumClass">
-                        Sum: {{ weightSum.toFixed(2) }} {{ weightSum === 1.0 ? '✓' : '← must equal 1.0' }}
+                        Sum: {{ weightSum.toFixed(2) }} {{ weightSum === 1.0 ? '(OK)' : '(must equal 1.0)' }}
                     </div>
 
                     <div v-for="w in weightFields" :key="w.key" class="slider-row">
@@ -43,12 +43,12 @@
 
                 <!-- Risk Thresholds -->
                 <div class="policy-card">
-                    <div class="card-title">Risk Thresholds</div>
+                    <div class="card-title">Risk thresholds</div>
                     <p class="card-desc">Minimum scores needed to flag a submission.</p>
 
                     <div class="slider-row">
                         <div class="slider-header">
-                            <span class="slider-label">Min Behavioural Risk Score</span>
+                            <span class="slider-label">Min behavioural risk score</span>
                             <span class="slider-val">{{ (policy.min_risk_score * 100).toFixed(0) }}%</span>
                         </div>
                         <input type="range" min="0.05" max="0.8" step="0.05"
@@ -60,7 +60,19 @@
 
                     <div class="slider-row">
                         <div class="slider-header">
-                            <span class="slider-label">Similarity Threshold (TF-IDF)</span>
+                            <span class="slider-label">Compare code from risk score</span>
+                            <span class="slider-val">{{ (policy.compare_min_risk * 100).toFixed(0) }}%</span>
+                        </div>
+                        <input type="range" min="0.2" max="0.8" step="0.05"
+                            :value="policy.compare_min_risk"
+                            @input="onSlider('compare_min_risk', $event)"
+                            class="slider" />
+                        <p class="slider-desc">Flagged students at or above this score have their code compared with everyone who answered the question (so do students with 3+ signals). The weights above decide who gets here: a 100% paste alone scores the paste weight. Lower = more students compared.</p>
+                    </div>
+
+                    <div class="slider-row">
+                        <div class="slider-header">
+                            <span class="slider-label">Similarity threshold (TF-IDF)</span>
                             <span class="slider-val">{{ (policy.similarity_threshold * 100).toFixed(0) }}%</span>
                         </div>
                         <input type="range" min="0.5" max="0.99" step="0.01"
@@ -73,12 +85,12 @@
 
                 <!-- Exam Rules -->
                 <div class="policy-card">
-                    <div class="card-title">Exam Rules</div>
+                    <div class="card-title">Exam rules</div>
                     <p class="card-desc">Attempt limits applied globally to all questions across all exams.</p>
 
                     <div class="slider-row">
                         <div class="slider-header">
-                            <span class="slider-label">Max Attempts per Question</span>
+                            <span class="slider-label">Max attempts per question</span>
                             <span class="slider-val">{{ policy.max_attempts }}</span>
                         </div>
                         <input
@@ -88,13 +100,13 @@
                             @input="onSlider('max_attempts', $event)"
                             class="slider"
                         />
-                        <p class="slider-desc">How many times a student can submit code for any question. Enforced atomically in Redis.</p>
+                        <p class="slider-desc">How many times a student can submit code for any question.</p>
                     </div>
                 </div>
 
                 <!-- Time Baselines -->
                 <div class="policy-card">
-                    <div class="card-title">Time Baselines</div>
+                    <div class="card-title">Time baselines</div>
                     <p class="card-desc">Minimum expected solve time per difficulty. Solving faster than this triggers the time signal.</p>
 
                     <div v-for="b in baselineFields" :key="b.key" class="slider-row">
@@ -112,7 +124,7 @@
 
                 <!-- Preview panel -->
                 <div class="policy-card preview-card">
-                    <div class="card-title">Policy Preview</div>
+                    <div class="card-title">Policy preview</div>
                     <div class="preview-grid">
                         <div class="preview-row">
                             <span class="pr-label">Paste ({{ (policy.paste_weight * 100).toFixed(0) }}%)</span>
@@ -134,6 +146,10 @@
                     <div class="preview-stat">
                         <span>Flag when risk ≥</span>
                         <span class="stat-val">{{ (policy.min_risk_score * 100).toFixed(0) }}%</span>
+                    </div>
+                    <div class="preview-stat">
+                        <span>Compare code when risk ≥</span>
+                        <span class="stat-val">{{ (policy.compare_min_risk * 100).toFixed(0) }}%</span>
                     </div>
                     <div class="preview-stat">
                         <span>Flag pairs when similarity ≥</span>
@@ -161,12 +177,15 @@
                 </div>
             </div>
 
-            <!-- Change reason + save — only visible after a slider moves -->
-            <div v-if="isDirty && !loading" class="save-panel">
+            <!-- Change reason + save: appears once a slider moves and sticks to the bottom of the screen,
+                 so it's never below the fold -->
+            <div v-if="isDirty && !loading" class="save-panel" role="region" aria-label="Unsaved policy changes">
+                <p class="save-panel-title">Unsaved changes</p>
                 <div class="save-panel-inner">
                     <div class="reason-block">
-                        <label class="reason-label">Reason for change <span class="reason-req">(required)</span></label>
+                        <label for="policy-reason" class="reason-label">Reason for change <span class="reason-req">(required)</span></label>
                         <textarea
+                            id="policy-reason"
                             v-model="changeReason"
                             class="reason-input"
                             placeholder="e.g. Increasing paste weight after semester 3 analysis showed low signal — 15% of flagged cases were false positives driven by time signal noise"
@@ -176,7 +195,7 @@
                     <div class="save-actions">
                         <button class="discard-btn" @click="discardChanges">Discard</button>
                         <button class="save-btn" @click="save" :disabled="saving || !changeReason.trim()">
-                            {{ saving ? 'Saving...' : 'Save Policy' }}
+                            {{ saving ? 'Saving...' : 'Save policy' }}
                         </button>
                     </div>
                 </div>
@@ -186,12 +205,12 @@
             <div class="rerun-section">
                 <div class="rerun-header">
                     <div>
-                        <div class="rerun-title">Re-run Plagiarism Checks</div>
-                        <div class="rerun-sub">Apply current policy to a past exam. Queues both Phase 1 (behavioural) and Phase 2 (similarity) — existing flags will be updated.</div>
+                        <div class="rerun-title">Re-run plagiarism checks</div>
+                        <div class="rerun-sub">Re-check an ended exam under the current policy: behaviour and code similarity. Pending flags are updated; decisions you've already made are kept.</div>
                     </div>
                 </div>
                 <div v-if="rerunLoading" class="rerun-state">Loading exams...</div>
-                <div v-else-if="rerunExams.length === 0" class="rerun-state">No closed exams found.</div>
+                <div v-else-if="rerunExams.length === 0" class="rerun-state">No ended exams yet.</div>
                 <div v-else class="rerun-list">
                     <div v-for="ex in rerunExams" :key="ex.id" class="rerun-row">
                         <div class="rerun-exam-info">
@@ -199,7 +218,7 @@
                             <span class="rerun-exam-date">{{ ex.end_time ? fmtDate(ex.end_time) : 'no end date' }}</span>
                         </div>
                         <div class="rerun-row-right">
-                            <span v-if="rerunQueued.has(ex.id)" class="rerun-queued" @click="switchToRuns" style="cursor:pointer" title="Click to view Run History">Queued — view in Run History →</span>
+                            <button v-if="rerunQueued.has(ex.id)" type="button" class="rerun-queued" @click="switchToRuns" title="Click to view run history">Queued — view in run history</button>
                             <button
                                 v-else
                                 class="rerun-btn"
@@ -241,7 +260,7 @@
                         <div v-if="v.affected_exams.length" class="cl-exams">
                             <div class="cl-exams-label">Exams active during this policy</div>
                             <div v-for="ex in v.affected_exams" :key="ex.id" class="cl-exam-row">
-                                <router-link :to="`/dashboard/support/exam/${ex.id}`" class="cl-exam-link">{{ ex.title }}</router-link>
+                                <router-link :to="`/dashboard/history/${ex.id}`" class="cl-exam-link">{{ ex.title }}</router-link>
                                 <span class="cl-exam-status" :class="ex.status === 'in-flight at change' ? 'status-inflight' : 'status-started'">
                                     {{ ex.status }}
                                 </span>
@@ -263,7 +282,7 @@
                     <div class="run-header">
                         <div class="run-meta">
                             <router-link :to="`/dashboard/plagiarism/cohorts/${run.exam_id}`" class="run-exam">{{ run.exam_title }}</router-link>
-                            <span :class="['run-trigger', run.trigger]">{{ run.trigger === 'manual_rerun' ? 'Manual Re-run' : 'Auto (Exam Close)' }}</span>
+                            <span :class="['run-trigger', run.trigger]">{{ run.trigger === 'manual_rerun' ? 'Manual re-run' : 'Auto (exam close)' }}</span>
                             <span :class="['run-status', run.status]">{{ run.status }}</span>
                         </div>
                         <div class="run-when-row">
@@ -272,8 +291,8 @@
                                 <span v-if="run.triggered_by" class="run-by">by {{ run.triggered_by }}</span>
                             </div>
                             <div class="run-nav-links">
-                                <router-link :to="`/dashboard/plagiarism/cohorts/${run.exam_id}`" class="run-nav-link">Rings &amp; Risk →</router-link>
-                                <router-link :to="`/dashboard/history/${run.exam_id}?from=runs`" class="run-nav-link">Exam Stats →</router-link>
+                                <router-link :to="`/dashboard/plagiarism/cohorts/${run.exam_id}`" class="run-nav-link">Rings &amp; risk</router-link>
+                                <router-link :to="`/dashboard/history/${run.exam_id}?from=runs`" class="run-nav-link">Exam stats</router-link>
                             </div>
                         </div>
                     </div>
@@ -283,27 +302,27 @@
                         <div class="run-results">
                             <!-- Behavioural -->
                             <div class="run-section">
-                                <div class="run-section-title">Behavioural Flags</div>
+                                <div class="run-section-title">Behavioural flags</div>
                                 <div class="run-kpis">
                                     <div class="run-kpi">
                                         <div class="run-kpi-val bad">{{ run.b_flags_total }}</div>
-                                        <div class="run-kpi-label">Total Flags</div>
+                                        <div class="run-kpi-label">Total flags</div>
                                     </div>
-                                    <div class="run-kpi">
-                                        <div class="run-kpi-val bad">{{ run.b_high_confidence }}</div>
-                                        <div class="run-kpi-label">High Confidence</div>
+                                    <div class="run-kpi" :title="METRIC_HELP.confidence">
+                                        <div :class="['run-kpi-val', confidenceTextClass('high')]">{{ run.b_high_confidence }}</div>
+                                        <div class="run-kpi-label">{{ confidenceLabel('high') }}</div>
                                     </div>
-                                    <div class="run-kpi">
-                                        <div class="run-kpi-val mid">{{ run.b_medium_confidence }}</div>
-                                        <div class="run-kpi-label">Medium</div>
+                                    <div class="run-kpi" :title="METRIC_HELP.confidence">
+                                        <div :class="['run-kpi-val', confidenceTextClass('medium')]">{{ run.b_medium_confidence }}</div>
+                                        <div class="run-kpi-label">{{ confidenceLabel('medium') }}</div>
                                     </div>
-                                    <div class="run-kpi">
-                                        <div class="run-kpi-val">{{ run.b_low_confidence }}</div>
-                                        <div class="run-kpi-label">Low</div>
+                                    <div class="run-kpi" :title="METRIC_HELP.confidence">
+                                        <div :class="['run-kpi-val', confidenceTextClass('low')]">{{ run.b_low_confidence }}</div>
+                                        <div class="run-kpi-label">{{ confidenceLabel('low') }}</div>
                                     </div>
                                     <div class="run-kpi">
                                         <div class="run-kpi-val">{{ run.b_avg_risk_score != null ? (run.b_avg_risk_score * 100).toFixed(0) + '%' : '—' }}</div>
-                                        <div class="run-kpi-label">Avg Risk Score</div>
+                                        <div class="run-kpi-label">Avg risk score</div>
                                     </div>
                                 </div>
                             </div>
@@ -311,17 +330,17 @@
                             <!-- Similarity -->
                             <div class="run-section">
                                 <div class="run-section-title">
-                                    Similarity Pairs
+                                    Similarity pairs
                                     <span v-if="run.status === 'running'" class="run-progress">{{ run.questions_done }}/{{ run.questions_total }} questions done</span>
                                 </div>
                                 <div class="run-kpis">
                                     <div class="run-kpi">
                                         <div class="run-kpi-val bad">{{ run.s_flags_total }}</div>
-                                        <div class="run-kpi-label">Total Pairs</div>
+                                        <div class="run-kpi-label">Total pairs</div>
                                     </div>
                                     <div class="run-kpi">
                                         <div class="run-kpi-val bad">{{ run.s_pairs_90_plus }}</div>
-                                        <div class="run-kpi-label">≥90% Similar</div>
+                                        <div class="run-kpi-label">≥90% similar</div>
                                     </div>
                                     <div class="run-kpi">
                                         <div class="run-kpi-val mid">{{ run.s_pairs_80_90 }}</div>
@@ -329,7 +348,7 @@
                                     </div>
                                     <div class="run-kpi">
                                         <div class="run-kpi-val">{{ run.s_avg_similarity != null ? (run.s_avg_similarity * 100).toFixed(1) + '%' : '—' }}</div>
-                                        <div class="run-kpi-label">Avg Similarity</div>
+                                        <div class="run-kpi-label">Avg similarity</div>
                                     </div>
                                 </div>
                             </div>
@@ -337,7 +356,7 @@
 
                         <!-- Policy snapshot -->
                         <div class="run-section">
-                            <div class="run-section-title">Policy Used</div>
+                            <div class="run-section-title">Policy used</div>
                             <div class="policy-snap">
                                 <span v-for="(val, key) in run.policy_snapshot" :key="key" class="snap-pill">
                                     {{ fmtField(String(key)) }}: <strong>{{ fmtVal(String(key), val) }}</strong>
@@ -357,6 +376,8 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
+import { METRIC_HELP, confidenceLabel, confidenceTextClass } from '../utils/metrics'
+import { canRunPlagiarismCheck } from '../utils/exams'
 
 const route = useRoute()
 
@@ -367,6 +388,7 @@ interface Policy {
     submission_weight: number
     min_risk_score: number
     similarity_threshold: number
+    compare_min_risk: number
     easy_baseline_s: number
     medium_baseline_s: number
     hard_baseline_s: number
@@ -399,6 +421,7 @@ const policy = ref<Policy>({
     submission_weight: 0.15,
     min_risk_score: 0.20,
     similarity_threshold: 0.80,
+    compare_min_risk: 0.35,
     easy_baseline_s: 90,
     medium_baseline_s: 240,
     hard_baseline_s: 480,
@@ -407,16 +430,16 @@ const policy = ref<Policy>({
 let savedPolicy: Policy = { ...policy.value }
 
 const weightFields = [
-    { key: 'paste_weight' as const, label: 'Paste Signal', desc: 'Code copied via paste events — direct, hard to misinterpret.' },
-    { key: 'time_weight' as const, label: 'Time Signal', desc: 'Solved much faster than the difficulty baseline.' },
-    { key: 'tab_weight' as const, label: 'Tab Switch Signal', desc: 'Left the exam tab — corroborating signal.' },
-    { key: 'submission_weight' as const, label: 'Submission Surprise', desc: 'Code changed completely between attempts.' },
+    { key: 'paste_weight' as const, label: 'Paste signal', desc: 'Code copied via paste events — direct, hard to misinterpret.' },
+    { key: 'time_weight' as const, label: 'Time signal', desc: 'Solved much faster than the difficulty baseline.' },
+    { key: 'tab_weight' as const, label: 'Tab switch signal', desc: 'Left the exam tab — corroborating signal.' },
+    { key: 'submission_weight' as const, label: 'Submission surprise', desc: 'Code changed completely between attempts.' },
 ]
 
 const baselineFields = [
-    { key: 'easy_baseline_s' as const, label: 'Easy Baseline', min: 30, max: 600, desc: 'Minimum expected solve time for easy problems.' },
-    { key: 'medium_baseline_s' as const, label: 'Medium Baseline', min: 60, max: 1800, desc: 'Minimum expected solve time for medium problems.' },
-    { key: 'hard_baseline_s' as const, label: 'Hard Baseline', min: 120, max: 3600, desc: 'Minimum expected solve time for hard problems.' },
+    { key: 'easy_baseline_s' as const, label: 'Easy baseline', min: 30, max: 600, desc: 'Minimum expected solve time for easy problems.' },
+    { key: 'medium_baseline_s' as const, label: 'Medium baseline', min: 60, max: 1800, desc: 'Minimum expected solve time for medium problems.' },
+    { key: 'hard_baseline_s' as const, label: 'Hard baseline', min: 120, max: 3600, desc: 'Minimum expected solve time for hard problems.' },
 ]
 
 const weightSum = computed(() =>
@@ -451,6 +474,7 @@ const FIELD_LABELS: Record<string, string> = {
     submission_weight: 'Submission weight',
     min_risk_score: 'Min risk score',
     similarity_threshold: 'Similarity threshold',
+    compare_min_risk: 'Compare from risk',
     easy_baseline_s: 'Easy baseline',
     medium_baseline_s: 'Medium baseline',
     hard_baseline_s: 'Hard baseline',
@@ -477,8 +501,9 @@ async function loadRerunExams() {
     rerunLoading.value = true
     try {
         const res = await api.get('/dashboard/exams/')
+        // same exams the exam report can check: ended ones (ending a live exam runs the check itself)
         rerunExams.value = (res.data as any[])
-            .filter((e: any) => e.status === 'ended')
+            .filter(canRunPlagiarismCheck)
             .map((e: any) => ({ id: e.exam_id, title: e.title, end_time: e.end_time || null }))
     } finally {
         rerunLoading.value = false
@@ -588,11 +613,11 @@ async function save() {
 .tab-btn {
     padding: 7px 18px; font-size: 13px; font-weight: 500;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
+    border-radius: var(--radius-pill); color: var(--text-muted); cursor: pointer;
     transition: all 0.15s;
 }
 .tab-btn:hover { color: var(--text); }
-.tab-btn.active { background: var(--red-dim); border-color: rgba(230,57,70,0.3); color: var(--red); }
+.tab-btn.active { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
 
 .state-msg { color: var(--text-muted); padding: 40px 0; }
 
@@ -611,49 +636,54 @@ async function save() {
     font-size: 13px; font-weight: 600;
     padding: 8px 14px; border-radius: var(--radius-sm); margin-bottom: 16px;
 }
-.weight-sum.sum-ok { background: rgba(46,204,113,0.1); color: var(--green); }
-.weight-sum.sum-err { background: var(--red-dim); color: var(--red); }
+.weight-sum.sum-ok { background: var(--green-dim); color: var(--green-ink); }
+.weight-sum.sum-err { background: var(--red-dim); color: var(--red-ink); }
 
 .slider-row { margin-bottom: 20px; }
 .slider-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .slider-label { font-size: 13px; font-weight: 600; color: var(--text); }
-.slider-val { font-size: 14px; font-weight: 700; color: var(--red); }
+.slider-val { font-size: 14px; font-weight: 700; color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .slider {
     width: 100%; height: 4px; appearance: none;
     background: var(--surface3); border-radius: 2px; outline: none; cursor: pointer;
 }
 .slider::-webkit-slider-thumb {
     appearance: none; width: 16px; height: 16px;
-    border-radius: 50%; background: var(--red); cursor: pointer;
+    border-radius: 50%; background: var(--accent); cursor: pointer;
 }
 .slider-desc { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
 
 .preview-card { grid-column: 1 / -1; }
 .preview-grid { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .preview-row { display: flex; align-items: center; gap: 12px; }
-.pr-label { font-size: 13px; color: var(--text-muted); width: 160px; flex-shrink: 0; }
+.pr-label { font-size: 13px; color: var(--text-muted); width: 160px; flex-shrink: 0; font-family: var(--font-mono); }
 .pr-bar-wrap { flex: 1; height: 6px; background: var(--surface3); border-radius: 3px; overflow: hidden; }
-.pr-bar { height: 100%; background: var(--red); border-radius: 3px; transition: width 0.2s; }
+.pr-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s; }
 .preview-stat {
     display: flex; justify-content: space-between;
     padding: 8px 0; border-top: 1px solid var(--border);
     font-size: 13px; color: var(--text-muted);
 }
-.stat-val { font-weight: 700; color: var(--text); }
+.stat-val { font-weight: 700; color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .updated-at { font-size: 12px; color: var(--text-dim); margin-top: 12px; }
 
 /* Save panel */
 .save-panel {
+    position: sticky;
+    bottom: 16px;
+    z-index: 20;
     margin-top: 24px;
     background: var(--surface);
-    border: 1px solid rgba(230,57,70,0.3);
+    border: 1px solid var(--accent);
     border-radius: var(--radius);
-    padding: 20px 24px;
+    padding: 16px 24px 20px;
+    box-shadow: var(--shadow-lg);
 }
-.save-panel-inner { display: flex; gap: 20px; align-items: flex-end; }
-.reason-block { flex: 1; }
+.save-panel-title { margin: 0 0 10px; font-family: var(--font-display); font-size: 14px; font-weight: 600; color: var(--red-ink); }
+.save-panel-inner { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+.reason-block { flex: 1 1 320px; min-width: 0; }
 .reason-label { font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 6px; }
-.reason-req { color: var(--red); font-weight: 400; }
+.reason-req { color: var(--amber-ink); font-weight: 400; }
 .reason-input {
     width: 100%; padding: 10px 12px; font-size: 13px;
     background: var(--surface2); border: 1px solid var(--border);
@@ -662,18 +692,18 @@ async function save() {
     font-family: inherit;
 }
 .reason-input::placeholder { color: var(--text-dim); }
-.reason-input:focus { border-color: rgba(230,57,70,0.4); outline: none; }
+.reason-input:focus { border-color: var(--accent); outline: none; }
 .save-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
 .discard-btn {
     padding: 9px 20px; font-size: 13px; font-weight: 500;
-    background: transparent; border: 1px solid var(--border);
-    border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: var(--radius-pill); color: var(--text); cursor: pointer;
     transition: all 0.15s;
 }
-.discard-btn:hover { color: var(--text); border-color: var(--border2); }
+.discard-btn:hover { background: var(--surface2); }
 .save-btn {
-    padding: 9px 22px; background: var(--red); color: white;
-    border: none; border-radius: var(--radius-sm);
+    padding: 9px 22px; background: var(--accent); color: var(--accent-ink);
+    border: none; border-radius: var(--radius-pill);
     font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
 }
 .save-btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -697,7 +727,7 @@ async function save() {
 }
 .cl-dot {
     width: 10px; height: 10px;
-    background: var(--red); border-radius: 50%; flex-shrink: 0;
+    background: var(--accent); border-radius: 50%; flex-shrink: 0;
 }
 .cl-line {
     flex: 1; width: 2px; background: var(--border); margin-top: 6px;
@@ -722,15 +752,15 @@ async function save() {
     display: flex; align-items: center; gap: 8px; font-size: 13px;
 }
 .cl-field { color: var(--text-muted); width: 160px; flex-shrink: 0; font-weight: 500; }
-.cl-before { color: var(--text-dim); font-family: monospace; }
+.cl-before { color: var(--text-dim); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .cl-arrow { color: var(--text-dim); font-size: 11px; }
-.cl-after { color: var(--red); font-family: monospace; font-weight: 600; }
+.cl-after { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
 .cl-nochange { font-size: 12px; color: var(--text-dim); }
 
 .cl-exams { margin-top: 10px; }
 .cl-exams-label {
-    font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.8px; color: var(--text-dim); margin-bottom: 6px;
+    font-size: 11px; font-weight: 700;
+    color: var(--text-dim); margin-bottom: 6px;
 }
 .cl-exam-row {
     display: flex; align-items: center; gap: 8px;
@@ -738,13 +768,13 @@ async function save() {
     font-size: 13px;
 }
 .cl-exam-link { color: var(--text); text-decoration: none; font-weight: 500; flex: 1; }
-.cl-exam-link:hover { color: var(--red); text-decoration: underline; }
+.cl-exam-link:hover { color: var(--accent-hover); text-decoration: underline; }
 .cl-exam-status {
     font-size: 11px; font-weight: 600; padding: 2px 8px;
     border-radius: 4px; white-space: nowrap; flex-shrink: 0;
 }
-.status-inflight  { background: rgba(245,158,11,0.12); color: #f59e0b; }
-.status-started   { background: rgba(34,197,94,0.10);  color: #22c55e; }
+.status-inflight  { background: var(--yellow-dim); color: var(--amber-ink); }
+.status-started   { background: var(--green-dim);  color: var(--green-ink); }
 
 .save-toast {
     position: fixed; bottom: 24px; right: 24px;
@@ -771,16 +801,16 @@ async function save() {
     font-weight: 700; font-size: 14px; color: var(--text);
     text-decoration: none;
 }
-.run-exam:hover { color: var(--red); text-decoration: underline; }
+.run-exam:hover { color: var(--accent-hover); text-decoration: underline; }
 .run-trigger {
     font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px;
 }
-.run-trigger.manual_rerun { background: rgba(99,102,241,0.15); color: #818cf8; }
+.run-trigger.manual_rerun { background: var(--surface2); color: var(--text-muted); }
 .run-trigger.exam_close   { background: var(--surface3); color: var(--text-dim); }
-.run-status { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; text-transform: uppercase; }
-.run-status.completed { background: rgba(34,197,94,0.12); color: #22c55e; }
-.run-status.running   { background: rgba(245,158,11,0.12); color: #f59e0b; }
-.run-status.failed    { background: var(--red-dim); color: var(--red); }
+.run-status { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+.run-status.completed { background: var(--green-dim);  color: var(--green-ink); }
+.run-status.running   { background: var(--yellow-dim); color: var(--amber-ink); }
+.run-status.failed    { background: var(--red-dim); color: var(--red-ink); }
 .run-when-row { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .run-when { font-size: 12px; color: var(--text-dim); }
 .run-by   { color: var(--text-muted); margin-left: 4px; }
@@ -789,23 +819,23 @@ async function save() {
     font-size: 12px; font-weight: 600; color: var(--text-muted);
     cursor: pointer; transition: color 0.15s;
 }
-.run-nav-link:hover { color: var(--red); }
+.run-nav-link:hover { color: var(--accent-hover); }
 
 .run-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
 .run-results { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .run-section-title {
-    font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 10px;
+    font-size: 11px; font-weight: 700;
+    color: var(--text-dim); margin-bottom: 10px;
     display: flex; align-items: center; gap: 10px;
 }
-.run-progress { font-size: 11px; color: #f59e0b; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.run-progress { font-size: 11px; color: var(--amber-ink); font-weight: 600; }
 .run-kpis { display: flex; flex-wrap: wrap; gap: 12px; }
 .run-kpi { min-width: 70px; }
-.run-kpi-val { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1; }
-.run-kpi-val.good { color: var(--green); }
-.run-kpi-val.mid  { color: #f59e0b; }
-.run-kpi-val.bad  { color: var(--red); }
-.run-kpi-label { font-size: 10px; color: var(--text-dim); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+.run-kpi-val { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.run-kpi-val.good { color: var(--green-ink); }
+.run-kpi-val.mid  { color: var(--amber-ink); }
+.run-kpi-val.bad  { color: var(--red-ink); }
+.run-kpi-label { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
 
 .policy-snap { display: flex; flex-wrap: wrap; gap: 8px; }
 .snap-pill {
@@ -850,21 +880,33 @@ async function save() {
 .rerun-row-right { flex-shrink: 0; }
 .rerun-btn {
     padding: 6px 16px;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-pill);
     color: var(--text-muted);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
 }
-.rerun-btn:hover:not(:disabled) { border-color: var(--red); color: var(--red); background: rgba(230,57,70,0.06); }
+.rerun-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
 .rerun-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .rerun-queued {
     font-size: 12px;
     font-weight: 600;
-    color: var(--green);
+    color: var(--green-ink);
     padding: 6px 10px;
+    background: none;
+    border: none;
+    font-family: inherit;
+    cursor: pointer;
 }
+
+/* Phone fixes: one column */
+@media (max-width: 899px) {
+    .policy-grid, .run-results { grid-template-columns: minmax(0, 1fr); }
+    .policy-grid > *, .run-results > * { min-width: 0; }
+}
+
+.page-header { flex-wrap: wrap; gap: 12px; }
 </style>

@@ -1,0 +1,9 @@
+FROM python:3.12-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/*
+WORKDIR /exec
+COPY . .
+RUN useradd -m runner
+USER runner
+# enable the between-run scrub (temp dir wipe + leftover process kill) as on Lambda
+ENV CODEMAS_EXEC_SCRUB=1
+CMD ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]

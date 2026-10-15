@@ -67,16 +67,36 @@ class BehaviouralFlagSerializer(serializers.ModelSerializer):
 
 
 class PlagiarismPolicySerializer(serializers.ModelSerializer):
+    WEIGHT_FIELDS = ('paste_weight', 'time_weight', 'tab_weight', 'submission_weight')
+
     class Meta:
         model = PlagiarismPolicy
         fields = [
             'paste_weight', 'time_weight', 'tab_weight', 'submission_weight',
-            'min_risk_score', 'similarity_threshold',
+            'min_risk_score', 'similarity_threshold', 'compare_min_risk',
             'easy_baseline_s', 'medium_baseline_s', 'hard_baseline_s',
             'max_attempts',
             'updated_at',
         ]
         read_only_fields = ['updated_at']
+
+    def validate(self, attrs):
+        # Partial updates only include the fields present in the request, so
+        # missing weight fields fall back to the current value on the instance
+        # (or the model default, when creating fresh) to validate the merged result.
+        def weight(field):
+            if field in attrs:
+                return attrs[field]
+            if self.instance is not None:
+                return getattr(self.instance, field)
+            return PlagiarismPolicy._meta.get_field(field).default
+
+        total = sum(weight(f) for f in self.WEIGHT_FIELDS)
+        if abs(total - 1.0) > 0.001:
+            raise serializers.ValidationError(
+                f'Weights must add up to 1.0; they add up to {total:.2f}.'
+            )
+        return attrs
 
 
 class ReviewAuditLogSerializer(serializers.ModelSerializer):

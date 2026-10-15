@@ -2,7 +2,7 @@
     <div class="search-page">
         <div class="page-header">
             <div>
-                <h1>Code Similarity Search</h1>
+                <h1>Code similarity search</h1>
                 <p class="page-sub">Paste any code — find similar submissions across all exams</p>
             </div>
         </div>
@@ -11,16 +11,14 @@
             <!-- ── Left: query panel ───────────────────────────────────────── -->
             <div class="query-panel">
                 <div class="card">
-                    <div class="card-title">Query Code</div>
+                    <div class="card-title">Code to search</div>
 
                     <div class="lang-row">
                         <label class="field-label">Language filter</label>
                         <select v-model="language" class="lang-select">
                             <option value="">All languages</option>
-                            <option value="python">Python</option>
                             <option value="javascript">JavaScript</option>
-                            <option value="java">Java</option>
-                            <option value="cpp">C++</option>
+                            <option value="python">Python</option>
                         </select>
                     </div>
 
@@ -42,7 +40,7 @@
                         >
                             <svg v-if="!loading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                             <span v-if="loading" class="spinner" />
-                            {{ loading ? 'Searching...' : 'Find Similar' }}
+                            {{ loading ? 'Searching...' : 'Find similar' }}
                         </button>
                     </div>
                 </div>
@@ -65,13 +63,11 @@
                         <p>No similar submissions found</p>
                     </div>
 
-                    <div v-for="r in results" :key="r.submission_id" class="result-card clickable" @click="router.push(`/dashboard/submissions/${r.submission_id}`)" >
+                    <router-link v-for="r in results" :key="r.submission_id" :to="`/dashboard/submissions/${r.submission_id}`" class="result-card clickable">
                         <div class="result-header">
                             <div class="result-meta">
                                 <span class="result-student">{{ r.student }}</span>
-                                <span class="result-dot">·</span>
                                 <span class="result-question">{{ r.question }}</span>
-                                <span class="result-dot">·</span>
                                 <span class="result-exam">{{ r.exam }}</span>
                             </div>
                             <div class="result-right">
@@ -93,7 +89,7 @@
                             <span class="result-date">{{ formatDate(r.submitted_at) }}</span>
                             <span class="result-id">sub #{{ r.submission_id }}</span>
                         </div>
-                    </div>
+                    </router-link>
                 </template>
             </div>
         </div>
@@ -102,10 +98,8 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
 import api from '../api'
-
-const router = useRouter()
+import { formatDate } from '../utils/format'
 
 const queryCode   = ref('')
 const language    = ref('')
@@ -136,9 +130,6 @@ function simClass(score: number) {
     return 'low'
 }
 
-function formatDate(iso: string) {
-    return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 </script>
 
 <style scoped>
@@ -151,10 +142,13 @@ function formatDate(iso: string) {
     gap: 16px;
     align-items: start;
 }
+@media (max-width: 899px) {
+    .search-layout { grid-template-columns: 1fr; }
+}
 
 /* Query panel */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
-.card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 16px; }
+.card-title { font-size: 11px; font-weight: 700; color: var(--text-dim); margin-bottom: 16px; }
 
 .lang-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .field-label { font-size: 12px; color: var(--text-muted); }
@@ -171,18 +165,18 @@ function formatDate(iso: string) {
 .code-editor {
     width: 100%;
     min-height: 340px;
-    background: var(--surface2);
+    background: var(--code-bg);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    color: var(--text);
-    font-family: monospace;
+    color: var(--code-text);
+    font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.6;
     padding: 12px;
     resize: vertical;
     box-sizing: border-box;
 }
-.code-editor:focus { outline: none; border-color: var(--red); }
+.code-editor:focus { outline: none; border-color: var(--accent); }
 
 .search-footer { display: flex; align-items: center; justify-content: space-between; }
 .char-count { font-size: 11px; color: var(--text-dim); }
@@ -191,10 +185,10 @@ function formatDate(iso: string) {
     align-items: center;
     gap: 6px;
     padding: 9px 18px;
-    background: var(--red);
+    background: var(--accent);
     border: none;
-    border-radius: var(--radius-sm);
-    color: white;
+    border-radius: var(--radius-pill);
+    color: var(--accent-ink);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -206,7 +200,7 @@ function formatDate(iso: string) {
 .spinner {
     width: 12px; height: 12px;
     border: 2px solid rgba(255,255,255,0.3);
-    border-top-color: white;
+    border-top-color: var(--accent-ink);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
     display: inline-block;
@@ -237,14 +231,17 @@ function formatDate(iso: string) {
 .results-sub { font-size: 12px; color: var(--text-dim); }
 
 .result-card {
+    display: block;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 16px;
+    text-decoration: none;
+    color: inherit;
     transition: border-color 0.15s;
 }
 .result-card.clickable { cursor: pointer; }
-.result-card.clickable:hover { border-color: var(--red); }
+.result-card.clickable:hover { border-color: var(--accent); }
 
 .result-header {
     display: flex;
@@ -263,22 +260,23 @@ function formatDate(iso: string) {
 
 .lang-badge {
     font-size: 10px; font-weight: 700; padding: 2px 7px;
-    border-radius: 10px; text-transform: uppercase;
+    border-radius: 10px; font-family: var(--font-mono);
     background: var(--surface3); color: var(--text-dim);
 }
 .status-badge {
-    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; text-transform: uppercase;
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
 }
-.status-badge.passed { background: rgba(46,204,113,0.12); color: var(--green); }
-.status-badge.failed { background: var(--red-dim); color: var(--red); }
+.status-badge.passed { background: var(--green-dim); color: var(--green-ink); }
+.status-badge.failed { background: var(--red-dim); color: var(--red-ink); }
 .status-badge.running,.status-badge.pending { background: var(--surface3); color: var(--text-dim); }
 
 .sim-badge {
     font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 10px;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
-.sim-badge.high { background: var(--red-dim); color: var(--red); }
-.sim-badge.mid  { background: rgba(241,196,15,0.12); color: var(--yellow); }
-.sim-badge.low  { background: rgba(46,204,113,0.1); color: var(--green); }
+.sim-badge.high { background: var(--red-dim); color: var(--red-ink); }
+.sim-badge.mid  { background: var(--yellow-dim); color: var(--amber-ink); }
+.sim-badge.low  { background: var(--green-dim); color: var(--green-ink); }
 
 .sim-bar-wrap { height: 3px; background: var(--surface3); border-radius: 2px; margin-bottom: 12px; overflow: hidden; }
 .sim-bar { height: 100%; border-radius: 2px; transition: width 0.4s; }
@@ -287,13 +285,13 @@ function formatDate(iso: string) {
 .sim-bar.low  { background: var(--green); }
 
 .code-preview {
-    background: var(--surface2);
+    background: var(--code-bg);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 10px 12px;
     font-size: 11px;
-    font-family: monospace;
-    color: var(--text-muted);
+    font-family: var(--font-mono);
+    color: var(--code-text);
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-all;
@@ -302,5 +300,5 @@ function formatDate(iso: string) {
     overflow: hidden;
 }
 
-.result-footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); }
+.result-footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
 </style>

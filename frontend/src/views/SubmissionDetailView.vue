@@ -11,126 +11,132 @@
         <div v-else-if="!sub" class="state-msg">Submission not found.</div>
 
         <template v-else>
-            <!-- ── Header strip ───────────────────────────────────────────── -->
+            <!-- ── Header ─────────────────────────────────────────────────── -->
             <div class="sub-header">
-                <div class="sub-identity">
-                    <div class="sub-avatar">{{ sub.student_username.slice(0,2).toUpperCase() }}</div>
-                    <div>
-                        <div class="sub-student">{{ sub.student_username }}</div>
-                        <div class="sub-meta">
-                            {{ sub.exam_title }} · {{ sub.question_title }} · attempt {{ sub.attempt_number }}
-                        </div>
-                    </div>
-                </div>
-                <div class="sub-badges">
-                    <span :class="['lang-badge', sub.language]">{{ sub.language }}</span>
-                    <span :class="['status-badge', sub.status]">{{ sub.status }}</span>
-                    <span class="sub-date">{{ formatDate(sub.submitted_at) }}</span>
+                <h1 class="sub-title">{{ sub.question_title }}</h1>
+                <div class="sub-meta-row">
+                    <span class="meta-item">{{ sub.student_username }}</span>
+                    <span class="meta-item">{{ sub.exam_title }}</span>
+                    <span class="meta-item">{{ sub.language }}</span>
+                    <span class="meta-item">{{ formatDateTime(sub.submitted_at) }}</span>
+                    <span class="meta-item">Attempt {{ sub.attempt_number }}</span>
                 </div>
             </div>
 
             <!-- ── KPI strip ──────────────────────────────────────────────── -->
             <div class="kpi-row">
                 <div class="kpi">
-                    <div class="kpi-label">Exec Time</div>
-                    <div class="kpi-val">{{ sub.execution_time_ms ?? '—' }}ms</div>
+                    <div class="kpi-label">Exec time</div>
+                    <div class="kpi-val mono">{{ formatMs(sub.execution_time_ms) }}</div>
                 </div>
                 <div class="kpi">
-                    <div class="kpi-label">Time Used</div>
-                    <div class="kpi-val">{{ sub.percent_time_used?.toFixed(1) ?? '—' }}%</div>
+                    <div class="kpi-label">Time used</div>
+                    <div class="kpi-val mono">{{ formatPct(sub.percent_time_used) }}</div>
                 </div>
                 <div class="kpi">
-                    <div class="kpi-label">Test Cases</div>
-                    <div class="kpi-val">{{ passedCount }}/{{ results.length }} passed</div>
+                    <div class="kpi-label">Test cases</div>
+                    <div class="kpi-val mono">{{ passedCount }}/{{ results.length }} passed</div>
                 </div>
                 <div class="kpi">
-                    <div class="kpi-label">Plagiarism Score</div>
-                    <div class="kpi-val" :class="sub.plagiarism_score > 0.8 ? 'text-red' : ''">
-                        {{ sub.plagiarism_score != null ? (sub.plagiarism_score * 100).toFixed(1) + '%' : '—' }}
+                    <div class="kpi-label">Plagiarism score</div>
+                    <div class="kpi-val mono" :class="sub.plagiarism_score > 0.8 ? 'text-fail' : ''">
+                        {{ formatPct(sub.plagiarism_score != null ? sub.plagiarism_score * 100 : null) }}
                     </div>
                 </div>
                 <div class="kpi">
-                    <div class="kpi-label">IP Address</div>
+                    <div class="kpi-label">IP address</div>
                     <div class="kpi-val mono">{{ sub.ip_address ?? '—' }}</div>
                 </div>
                 <div class="kpi">
-                    <div class="kpi-label">Behavioural Check</div>
-                    <div class="kpi-val" :class="sub.behavioural_check_done ? 'text-green' : 'text-yellow'">
+                    <div class="kpi-label">Behavioural check</div>
+                    <div class="kpi-val" :class="sub.behavioural_check_done ? 'text-pass' : 'text-pending'">
                         {{ sub.behavioural_check_done ? 'Done' : 'Pending' }}
                     </div>
                 </div>
                 <div class="kpi">
-                    <div class="kpi-label">Similarity Check</div>
+                    <div class="kpi-label">Similarity check</div>
                     <div class="kpi-val" :class="similarityCheck.cls" :title="similarityCheck.hint">
                         {{ similarityCheck.text }}
                     </div>
                 </div>
             </div>
 
+            <!-- ── Verdict + pipeline + results table ───────────────────── -->
+            <div class="card verdict-card">
+                <div v-if="resultsLoading" class="mini-state">Loading...</div>
+                <template v-else>
+                    <div v-if="results.length > 0" class="verdict-block">
+                        <div class="verdict-head">
+                            <span class="verdict-headline" :class="verdict.passed ? 'pass' : 'fail'">{{ verdict.headline }}</span>
+                            <span class="verdict-sub">{{ verdict.secondary }}</span>
+                        </div>
+
+                        <PipelineTracker
+                            :stage="pipelineStage"
+                            :tests="trackerTests"
+                            :test-count="results.length"
+                            :rubric-ready="!!rubric"
+                            :hint-expected="sub.status === 'failed'"
+                            :hint-ready="!!hint"
+                            :elapsed-ms="null"
+                            :show-banner="false"
+                        />
+
+                        <div class="table-scroll">
+                        <div role="table" aria-label="Test results" class="results-table">
+                            <div role="row" class="results-row results-head">
+                                <span role="columnheader">Test</span>
+                                <span role="columnheader">Input</span>
+                                <span role="columnheader">Expected</span>
+                                <span role="columnheader">Output</span>
+                                <span role="columnheader">Time</span>
+                                <span role="columnheader">Result</span>
+                            </div>
+                            <template v-for="(r, i) in results" :key="r.id">
+                                <div role="row" class="results-row" :class="{ 'row-fail': !r.passed }">
+                                    <span role="cell" class="dim">{{ i + 1 }}</span>
+                                    <span role="cell">{{ r.test_case_input || '(none)' }}</span>
+                                    <span role="cell">{{ r.test_case_expected }}</span>
+                                    <span role="cell" :class="{ 'text-fail': !r.passed }">{{ r.actual_output || '(no output)' }}</span>
+                                    <span role="cell" class="dim">{{ formatMs(r.execution_time_ms) }}</span>
+                                    <span role="cell" class="result-label" :class="r.passed ? 'text-pass' : 'text-fail'">{{ r.passed ? 'Pass' : 'Fail' }}</span>
+                                </div>
+                                <p v-if="r.error_message" class="row-error">{{ r.error_message }}</p>
+                            </template>
+                        </div>
+                        </div>
+                    </div>
+                    <div v-else class="mini-state">No results yet</div>
+                </template>
+            </div>
+
             <div class="main-grid">
                 <!-- ── Code panel ─────────────────────────────────────────── -->
                 <div class="card code-card">
-                    <div class="card-title">Submitted Code</div>
+                    <div class="card-title">Submitted code</div>
                     <pre class="code-block">{{ sub.code }}</pre>
                 </div>
 
                 <!-- ── Right column ───────────────────────────────────────── -->
                 <div class="right-col">
 
-                    <!-- Test case results -->
-                    <div class="card">
-                        <div class="card-title">Test Case Results</div>
-                        <div v-if="resultsLoading" class="mini-state">Loading...</div>
-                        <div v-else-if="results.length === 0" class="mini-state">No results yet</div>
-                        <div v-else class="tc-list">
-                            <div v-for="(r, i) in results" :key="r.id" class="tc-row">
-                                <div class="tc-header">
-                                    <span :class="['tc-badge', r.passed ? 'pass' : 'fail']">
-                                        {{ r.passed ? '✓' : '✗' }} Test {{ i + 1 }}
-                                    </span>
-                                    <span class="tc-time">{{ r.execution_time_ms }}ms</span>
-                                </div>
-                                <div class="tc-grid">
-                                    <div class="tc-block">
-                                        <div class="tc-block-label">Input</div>
-                                        <pre class="tc-pre">{{ r.test_case_input || '(none)' }}</pre>
-                                    </div>
-                                    <div class="tc-block">
-                                        <div class="tc-block-label">Expected</div>
-                                        <pre class="tc-pre expected">{{ r.test_case_expected }}</pre>
-                                    </div>
-                                    <div class="tc-block">
-                                        <div class="tc-block-label">Actual</div>
-                                        <pre class="tc-pre" :class="r.passed ? 'actual-pass' : 'actual-fail'">{{ r.actual_output || r.error_message || '(no output)' }}</pre>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- AI evaluation (rubric + hint) — read-only trainer view -->
-                    <div class="card ai-card">
-                        <div class="ai-card-head">
-                            <span class="ai-icon">
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5l-1.9-4.6L5.5 9l4.6-1.4L12 3z"/><path d="M19 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z"/></svg>
-                            </span>
-                            <span class="ai-card-title">AI Evaluation</span>
-                            <span class="ai-gpt-chip">GPT</span>
-                        </div>
+                    <AiGlow title="Rubric review" class="ai-card">
+                        <p class="ai-caption">Check it before acting on it.</p>
                         <div v-if="aiLoading" class="mini-state">Loading...</div>
                         <template v-else>
                             <!-- Rubric -->
                             <div v-if="rubric">
                                 <div class="ai-total-row">
-                                    <span class="ai-total-label">Rubric Score</span>
-                                    <span class="ai-total-badge" :class="scoreClass(rubric.total_score, 8)">
+                                    <span class="ai-total-label">Rubric score</span>
+                                    <span class="ai-total-badge mono" :class="scoreClass(rubric.total_score, 8)">
                                         {{ rubric.total_score }}<span class="ai-total-max">/8</span>
                                     </span>
                                 </div>
                                 <div v-for="dim in rubricDimensions" :key="dim.label" class="ai-dim">
                                     <div class="ai-dim-top">
                                         <span class="ai-dim-label">{{ dim.label }}</span>
-                                        <span class="ai-dim-score" :class="scoreClass(dim.score, 2)">{{ dim.score }}/2</span>
+                                        <span class="ai-dim-score mono" :class="scoreClass(dim.score, 2)">{{ dim.score }}/2</span>
                                     </div>
                                     <div class="ai-bar"><div class="ai-bar-fill" :class="scoreClass(dim.score, 2)" :style="{ width: (dim.score / 2 * 100) + '%' }" /></div>
                                     <p class="ai-dim-note">{{ dim.note }}</p>
@@ -142,26 +148,25 @@
                             <!-- Hint (only present on failed submissions) -->
                             <template v-if="hint">
                                 <div class="ai-hint-head">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg>
-                                    Socratic Hint Shown to Student
+                                    Socratic hint shown to student
                                 </div>
                                 <p class="ai-hint">{{ hint }}</p>
                             </template>
                         </template>
-                    </div>
+                    </AiGlow>
 
                     <!-- Plagiarism flags -->
                     <div class="card">
-                        <div class="card-title">Integrity Flags</div>
+                        <div class="card-title">Integrity flags</div>
                         <div v-if="plagLoading" class="mini-state">Loading...</div>
                         <template v-else>
 
                             <!-- Behavioural -->
                             <div v-if="plagData.behavioural" class="flag-section">
                                 <div class="flag-section-title">
-                                    Behavioural Analysis
-                                    <span :class="['conf-badge', plagData.behavioural.confidence]">
-                                        {{ plagData.behavioural.confidence }} risk
+                                    Behavioural analysis
+                                    <span :class="['conf-badge', confidenceClass(plagData.behavioural.confidence)]" :title="METRIC_HELP.confidence">
+                                        {{ confidenceLabel(plagData.behavioural.confidence) }}
                                     </span>
                                     <span :class="['rev-badge', plagData.behavioural.review_status]">
                                         {{ plagData.behavioural.review_status }}
@@ -172,7 +177,7 @@
                                         :style="{ width: (plagData.behavioural.risk_score * 100) + '%' }"
                                         :class="plagData.behavioural.confidence" />
                                 </div>
-                                <div class="risk-score-label">Risk score: {{ (plagData.behavioural.risk_score * 100).toFixed(1) }}%</div>
+                                <div class="risk-score-label">Risk {{ formatRisk(plagData.behavioural.risk_score) }}</div>
                                 <div class="signals-list">
                                     <div v-for="(sig, i) in plagData.behavioural.signals" :key="i" class="signal-item">
                                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
@@ -183,22 +188,28 @@
                                     Note: {{ plagData.behavioural.review_note }}
                                 </div>
                             </div>
-                            <div v-else class="clean-flag">
+                            <div v-else-if="sub.behavioural_check_done" class="clean-flag">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
                                 No behavioural flags
+                            </div>
+                            <div v-else class="pending-flag">
+                                Behaviour check hasn't run yet
                             </div>
 
                             <div class="flag-divider" />
 
                             <!-- Similarity -->
-                            <div class="flag-section-title">Similarity Flags</div>
-                            <div v-if="plagData.similarity?.length === 0" class="clean-flag">
+                            <div class="flag-section-title">Similarity flags</div>
+                            <div v-if="plagData.similarity?.length === 0 && sub.similarity_check_done" class="clean-flag">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
                                 No similarity flags
                             </div>
+                            <div v-else-if="plagData.similarity?.length === 0" class="pending-flag">
+                                {{ similarityCheck.hint || "Similarity check hasn't run yet" }}
+                            </div>
                             <div v-for="f in plagData.similarity" :key="f.flag_id" class="sim-flag-row">
                                 <div class="sim-flag-left">
-                                    <span class="sim-flag-score" :class="f.similarity_score >= 0.9 ? 'text-red' : 'text-yellow'">
+                                    <span class="sim-flag-score mono" :class="f.similarity_score >= 0.9 ? 'text-fail' : 'text-pending'">
                                         {{ (f.similarity_score * 100).toFixed(1) }}% match
                                     </span>
                                     <span class="sim-flag-student">vs {{ f.other_student }}</span>
@@ -206,7 +217,7 @@
                                 <div class="sim-flag-right">
                                     <span :class="['rev-badge', f.review_status]">{{ f.review_status }}</span>
                                     <button class="view-btn" @click.stop="router.push(`/dashboard/submissions/${f.other_submission}`)">
-                                        View →
+                                        View
                                     </button>
                                 </div>
                             </div>
@@ -231,6 +242,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
+import PipelineTracker from '../components/PipelineTracker.vue'
+import AiGlow from '../components/AiGlow.vue'
+import { formatDateTime, formatMs, formatPct, formatRisk } from '../utils/format'
+import { METRIC_HELP, confidenceClass, confidenceLabel } from '../utils/metrics'
+
+type Stage = 'idle' | 'submit' | 'queue' | 'execute' | 'grade' | 'feedback' | 'done'
 
 const route  = useRoute()
 const router = useRouter()
@@ -249,6 +266,22 @@ const hint      = ref<string | null>(null)
 
 const passedCount = computed(() => results.value.filter(r => r.passed).length)
 
+// This is a historical/finished (or in-flight) submission, not a live run — map
+// the stored submission.status honestly onto the pipeline's stages rather than
+// pretending we observed every step.
+const pipelineStage = computed<Stage>(() => {
+    const status = sub.value?.status
+    if (status === 'pending') return 'queue'
+    if (status === 'running') return 'execute'
+    if (status === 'passed' || status === 'failed') return 'done'
+    return 'idle'
+})
+
+const trackerTests = computed(() => {
+    if (results.value.length === 0) return null
+    return results.value.map(r => ({ passed: r.passed }))
+})
+
 // Similarity check has three real states, not two. similarity_check_done=false
 // can mean "exam run hasn't happened" OR "run happened but this submission wasn't
 // a behavioural suspect, so it was never cross-compared" (by design). We use
@@ -257,7 +290,7 @@ const similarityCheck = computed(() => {
     const s = sub.value
     if (!s) return { text: '—', cls: 'text-dim', hint: '' }
     if (s.similarity_check_done) {
-        return { text: 'Done', cls: 'text-green', hint: 'This submission was cross-compared via TF-IDF similarity.' }
+        return { text: 'Done', cls: 'text-pass', hint: 'This submission was cross-compared via TF-IDF similarity.' }
     }
     if (s.behavioural_check_done) {
         return {
@@ -265,7 +298,7 @@ const similarityCheck = computed(() => {
             hint: 'The exam\'s plagiarism run completed, but this submission was not a high-risk behavioural suspect, so it was not cross-compared (by design).',
         }
     }
-    return { text: 'Pending', cls: 'text-yellow', hint: 'The exam\'s plagiarism run has not run yet for this submission.' }
+    return { text: 'Pending', cls: 'text-pending', hint: 'The exam\'s plagiarism run has not run yet for this submission.' }
 })
 
 // Map a score to a quality band so bars/badges colour by performance
@@ -281,10 +314,34 @@ const rubricDimensions = computed(() => {
     if (!r) return []
     return [
         { label: 'Correctness', score: r.correctness_score, note: r.correctness_note },
-        { label: 'Code Quality', score: r.code_quality_score, note: r.code_quality_note },
+        { label: 'Code quality', score: r.code_quality_score, note: r.code_quality_note },
         { label: 'Approach', score: r.approach_score, note: r.approach_note },
-        { label: 'Edge Cases', score: r.edge_case_score, note: r.edge_case_note },
+        { label: 'Edge cases', score: r.edge_case_score, note: r.edge_case_note },
     ]
+})
+
+// Verdict headline derived from real results only — same rules as the student-
+// facing exam view, so a trainer sees the identical verdict the student saw.
+const verdict = computed(() => {
+    const list = results.value
+    if (list.length === 0) return { headline: '', secondary: '', passed: true }
+    const passedN = list.filter((r) => r.passed).length
+    const failedN = list.length - passedN
+    if (failedN === 0) {
+        return { headline: 'Accepted', secondary: `${passedN} passed, ${failedN} failed`, passed: true }
+    }
+    const idx = list.findIndex((r) => !r.passed)
+    const r = list[idx]
+    if (!r) return { headline: '', secondary: '', passed: true }
+    let headline: string
+    if (r.error_message && r.error_message.toLowerCase().includes('time limit')) {
+        headline = `Time limit exceeded on test ${idx + 1}`
+    } else if (r.error_message && !r.actual_output) {
+        headline = `Error on test ${idx + 1}`
+    } else {
+        headline = `Wrong answer on test ${idx + 1} of ${list.length}`
+    }
+    return { headline, secondary: `${passedN} passed, ${failedN} failed`, passed: false }
 })
 
 onMounted(async () => {
@@ -315,21 +372,15 @@ onMounted(async () => {
     }
 })
 
-function formatDate(iso: string) {
-    return new Date(iso).toLocaleString('en-IN', {
-        day: 'numeric', month: 'short', year: 'numeric',
-        hour: '2-digit', minute: '2-digit',
-    })
-}
 </script>
 
 <style scoped>
 .page-header { margin-bottom: 20px; }
 .back-btn {
     display: inline-flex; align-items: center; gap: 6px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); padding: 7px 14px;
-    color: var(--text-muted); font-size: 13px; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: var(--radius-pill); padding: 8px 16px; min-height: 40px;
+    color: var(--text); font-size: 13px; cursor: pointer;
     transition: all 0.15s;
 }
 .back-btn:hover { background: var(--surface2); color: var(--text); }
@@ -337,27 +388,13 @@ function formatDate(iso: string) {
 
 /* Header */
 .sub-header {
-    display: flex; align-items: center; justify-content: space-between;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 18px 22px; margin-bottom: 14px;
 }
-.sub-identity { display: flex; align-items: center; gap: 14px; }
-.sub-avatar {
-    width: 40px; height: 40px; border-radius: 50%;
-    background: var(--surface3); border: 1px solid var(--border2);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 700; color: var(--red); flex-shrink: 0;
-}
-.sub-student { font-size: 15px; font-weight: 700; color: var(--text); }
-.sub-meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
-.sub-badges { display: flex; align-items: center; gap: 8px; }
-.sub-date { font-size: 11px; color: var(--text-dim); }
-
-.lang-badge { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 10px; text-transform: uppercase; background: var(--surface3); color: var(--text-dim); }
-.status-badge { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 10px; text-transform: uppercase; }
-.status-badge.passed { background: rgba(46,204,113,0.12); color: var(--green); }
-.status-badge.failed { background: var(--red-dim); color: var(--red); }
-.status-badge.running,.status-badge.pending { background: var(--surface3); color: var(--text-dim); }
+.sub-title { font-size: 26px; font-weight: 600; color: var(--text); margin: 0 0 10px; line-height: 1.3; }
+.sub-title-sep { color: var(--text-dim); font-weight: 400; }
+.sub-meta-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.meta-item { font-size: 13px; color: var(--text-muted); }
 
 /* KPI row */
 .kpi-row {
@@ -366,163 +403,177 @@ function formatDate(iso: string) {
     overflow: hidden; margin-bottom: 14px;
 }
 .kpi { flex: 1; background: var(--surface); padding: 14px 18px; }
-.kpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 4px; }
-.kpi-val { font-size: 18px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
-.kpi-val.mono { font-family: monospace; font-size: 13px; }
-.text-red    { color: var(--red) !important; }
-.text-yellow { color: var(--yellow) !important; }
-.text-green  { color: var(--green) !important; }
+.kpi-label { font-size: 11px; font-weight: 600; color: var(--text-dim); margin-bottom: 4px; }
+.kpi-val { font-size: 18px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.kpi-val.mono { font-family: var(--font-mono); font-size: 13px; }
+.text-fail    { color: var(--red-ink) !important; }
+.text-pending { color: var(--amber-ink) !important; }
+.text-pass    { color: var(--green-ink) !important; }
 .kpi-val.text-dim { color: var(--text-dim) !important; font-size: 14px; }
+
+/* Verdict + pipeline + results table */
+.verdict-card { margin-bottom: 14px; }
+.verdict-block { display: flex; flex-direction: column; gap: 16px; }
+.verdict-head { display: flex; align-items: baseline; gap: 14px; }
+.verdict-headline { font-size: 20px; font-weight: 600; }
+.verdict-headline.pass { color: var(--green-ink); }
+.verdict-headline.fail { color: var(--red-ink); }
+.verdict-sub { font-size: 14px; color: var(--text-muted); }
+
+.results-table {
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.results-row {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr) 72px 80px;
+    padding: 8px 14px;
+    font-family: var(--font-mono);
+}
+.results-head {
+    color: var(--text-muted);
+    background: var(--surface2);
+    font-weight: 500;
+    font-family: var(--font-sans);
+}
+.results-row:not(.results-head) { border-top: 1px solid var(--border); }
+.results-row.row-fail { background: var(--red-dim); }
+.results-row:not(.results-head) > [role="cell"] { white-space: pre-line; align-self: start; }
+.dim { color: var(--text-muted); }
+.result-label { font-family: var(--font-sans); font-weight: 500; }
+.row-error {
+    margin: 0;
+    padding: 6px 14px 10px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--red-ink);
+}
 
 /* Main grid */
 .main-grid { display: grid; grid-template-columns: 1fr 420px; gap: 14px; align-items: start; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 14px; }
 .card:last-child { margin-bottom: 0; }
-.card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 14px; }
+.card-title { font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 14px; }
 .right-col { display: flex; flex-direction: column; }
 
 /* Code */
 .code-card { height: fit-content; }
 .code-block {
-    background: var(--surface2); border: 1px solid var(--border);
+    background: var(--code-bg); border: 1px solid var(--border);
     border-radius: var(--radius-sm); padding: 16px;
-    font-family: monospace; font-size: 12px; line-height: 1.7;
-    color: var(--text); white-space: pre-wrap; word-break: break-all;
+    font-family: var(--font-mono); font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-all;
     max-height: 600px; overflow-y: auto;
+    color: var(--code-text);
 }
 
-/* Test cases */
+/* Shared states */
 .mini-state { color: var(--text-dim); font-size: 13px; padding: 20px 0; text-align: center; }
-.tc-list { display: flex; flex-direction: column; gap: 12px; }
-.tc-row { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
-.tc-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface2); }
-.tc-badge { font-size: 11px; font-weight: 700; }
-.tc-badge.pass { color: var(--green); }
-.tc-badge.fail { color: var(--red); }
-.tc-time { font-size: 11px; color: var(--text-dim); font-family: monospace; }
-.tc-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; background: var(--border); }
-.tc-block { background: var(--surface); padding: 8px 10px; }
-.tc-block-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 4px; }
-.tc-pre { font-family: monospace; font-size: 11px; color: var(--text-muted); white-space: pre-wrap; word-break: break-all; margin: 0; }
-.tc-pre.expected { color: var(--text-muted); }
-.tc-pre.actual-pass { color: var(--green); }
-.tc-pre.actual-fail { color: var(--red); }
+.mono { font-family: var(--font-mono); }
 
 /* Question */
 .q-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
-.q-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+.q-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; white-space: pre-line; }
 
 /* Plagiarism */
 .flag-section { margin-bottom: 14px; }
-.flag-section-title { font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.flag-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
 .flag-divider { height: 1px; background: var(--border); margin: 14px 0; }
 
-.conf-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; }
-.conf-badge.high   { background: var(--red-dim); color: var(--red); }
-.conf-badge.medium { background: rgba(241,196,15,0.12); color: var(--yellow); }
-.conf-badge.low    { background: var(--surface3); color: var(--text-dim); }
+.conf-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 10px; }
 
-.rev-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; }
-.rev-badge.pending   { background: rgba(241,196,15,0.12); color: var(--yellow); }
-.rev-badge.confirmed { background: var(--red-dim); color: var(--red); }
+.rev-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 10px; }
+.rev-badge.pending   { background: var(--yellow-dim); color: var(--amber-ink); }
+.rev-badge.confirmed { background: var(--red-dim); color: var(--red-ink); }
 .rev-badge.dismissed { background: var(--surface3); color: var(--text-dim); }
 
 .risk-bar-wrap { height: 4px; background: var(--surface3); border-radius: 2px; margin-bottom: 4px; overflow: hidden; }
 .risk-bar { height: 100%; border-radius: 2px; }
 .risk-bar.high   { background: var(--red); }
 .risk-bar.medium { background: var(--yellow); }
-.risk-bar.low    { background: var(--green); }
+.risk-bar.low    { background: var(--text-dim); } /* low flag confidence is neutral, never green */
 .risk-score-label { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
 
 .signals-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
 .signal-item { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
-.signal-item svg { flex-shrink: 0; margin-top: 2px; color: var(--yellow); }
+.signal-item svg { flex-shrink: 0; margin-top: 2px; color: var(--amber-ink); }
 
 .review-note { font-size: 11px; color: var(--text-dim); font-style: italic; background: var(--surface2); padding: 6px 10px; border-radius: var(--radius-sm); }
 
-.clean-flag { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--green); padding: 6px 0; }
+.clean-flag { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--green-ink); padding: 6px 0; }
+.pending-flag { font-size: 12px; color: var(--text-dim); padding: 6px 0; }
 
 .sim-flag-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .sim-flag-row:last-child { border-bottom: none; }
 .sim-flag-left { display: flex; align-items: center; gap: 10px; }
-.sim-flag-score { font-size: 13px; font-weight: 700; }
+.sim-flag-score { font-size: 13px; font-weight: 600; }
 .sim-flag-student { font-size: 12px; color: var(--text-dim); }
 .sim-flag-right { display: flex; align-items: center; gap: 8px; }
-.text-red    { color: var(--red); }
-.text-yellow { color: var(--yellow); }
 
 .view-btn {
-    font-size: 11px; font-weight: 600; color: var(--red);
-    background: var(--red-dim); border: none; border-radius: var(--radius-sm);
-    padding: 3px 9px; cursor: pointer; transition: opacity 0.15s;
+    font-size: 12px; font-weight: 500; color: var(--text);
+    background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 3px 10px; cursor: pointer; transition: all 0.15s;
 }
-.view-btn:hover { opacity: 0.75; }
+.view-btn:hover { border-color: var(--border2); background: var(--surface2); }
 
-/* AI evaluation — prominent, accented card */
-.ai-card {
-    position: relative;
-    border: 1px solid var(--blue);
-    background:
-        linear-gradient(180deg, var(--blue-dim) 0%, rgba(0,0,0,0) 90px),
-        var(--surface);
-    box-shadow: 0 0 0 1px var(--blue-dim), var(--shadow);
-    overflow: hidden;
-}
-.ai-card::before {
-    content: '';
-    position: absolute; top: 0; left: 0; right: 0; height: 3px;
-    background: linear-gradient(90deg, var(--blue), var(--green));
-}
-.ai-card-head { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
-.ai-icon {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 26px; height: 26px; border-radius: 7px;
-    background: var(--blue); color: #fff; flex-shrink: 0;
-}
-.ai-card-title { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: 0.2px; }
-.ai-gpt-chip {
-    margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
-    padding: 2px 8px; border-radius: 10px;
-    background: var(--blue-dim); color: var(--blue); border: 1px solid var(--blue);
-}
+/* AI evaluation — plain card, no gradients/glow/chips */
+.ai-card { padding: 20px; margin-bottom: 14px; }
+.ai-caption { font-size: 12px; color: var(--text-dim); margin: 0 0 16px; }
 
 .ai-total-row {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 12px; margin-bottom: 14px;
     background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm);
 }
-.ai-total-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+.ai-total-label { font-size: 11px; font-weight: 600; color: var(--text-dim); }
 .ai-total-badge {
-    font-size: 20px; font-weight: 800; padding: 3px 12px; border-radius: var(--radius-sm);
+    font-size: 18px; font-weight: 600; padding: 3px 12px; border-radius: var(--radius-sm);
     font-variant-numeric: tabular-nums; line-height: 1;
 }
-.ai-total-max { font-size: 12px; font-weight: 700; opacity: 0.6; }
-.ai-total-badge.good { background: var(--green-dim); color: var(--green); }
-.ai-total-badge.mid  { background: var(--yellow-dim); color: var(--yellow); }
-.ai-total-badge.low  { background: var(--red-dim); color: var(--red); }
+.ai-total-max { font-size: 12px; font-weight: 600; opacity: 0.6; }
+.ai-total-badge.good { background: var(--green-dim); color: var(--green-ink); }
+.ai-total-badge.mid  { background: var(--yellow-dim); color: var(--amber-ink); }
+.ai-total-badge.low  { background: var(--red-dim); color: var(--red-ink); }
 
 .ai-dim { margin-bottom: 12px; }
 .ai-dim-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-.ai-dim-label { font-size: 12px; font-weight: 600; color: var(--text); }
-.ai-dim-score { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.ai-dim-score.good { color: var(--green); }
-.ai-dim-score.mid  { color: var(--yellow); }
-.ai-dim-score.low  { color: var(--red); }
-.ai-bar { height: 6px; background: var(--surface3); border-radius: 3px; overflow: hidden; }
-.ai-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.ai-dim-label { font-size: 12px; font-weight: 500; color: var(--text); }
+.ai-dim-score { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ai-dim-score.good { color: var(--green-ink); }
+.ai-dim-score.mid  { color: var(--amber-ink); }
+.ai-dim-score.low  { color: var(--red-ink); }
+.ai-bar { height: 4px; background: var(--surface3); border-radius: 2px; overflow: hidden; }
+.ai-bar-fill { height: 100%; border-radius: 2px; }
 .ai-bar-fill.good { background: var(--green); }
 .ai-bar-fill.mid  { background: var(--yellow); }
 .ai-bar-fill.low  { background: var(--red); }
-.ai-dim-note { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 5px 0 0; }
+.ai-dim-note { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin: 5px 0 0; }
 .ai-overall {
     font-size: 12px; color: var(--text); line-height: 1.6;
-    background: var(--surface2); border-left: 3px solid var(--blue);
+    background: var(--surface2); border: 1px solid var(--border);
     border-radius: var(--radius-sm); padding: 10px 12px; margin-top: 14px;
 }
 .ai-hint-head {
-    display: flex; align-items: center; gap: 7px;
-    font-size: 11px; font-weight: 700; color: var(--yellow);
+    font-size: 11px; font-weight: 600; color: var(--amber-ink);
     margin: 16px 0 8px; padding-top: 14px; border-top: 1px solid var(--border);
 }
-.ai-hint { font-size: 12px; color: var(--text-muted); line-height: 1.6; background: var(--yellow-dim); border: 1px solid var(--yellow); border-radius: var(--radius-sm); padding: 10px 12px; margin: 0; }
+.ai-hint { font-size: 12px; color: var(--text-muted); line-height: 1.6; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin: 0; }
+
+.table-scroll { overflow-x: auto; }
+.results-table { min-width: 640px; }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .kpi-row { flex-wrap: wrap; }
+    .kpi { flex: 1 1 33%; min-width: 120px; }
+}
+
+@media (max-width: 600px) {
+    .kpi { flex: 1 1 50%; }
+    .sub-title { font-size: 22px; }
+    .sub-meta-row { gap: 10px 14px; }
+}
 </style>
